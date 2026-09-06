@@ -14,6 +14,7 @@ import pyarrow.parquet as pq
 from btc5m_v2.config import V2Config, load_config
 from btc5m_v2.feeds.polymarket_ws import BookState, WsEnvelope, market_events
 from btc5m_v2.market import MarketInfo, discover_current_market
+from btc5m_v2.research.resolution import ResolutionResult, resolution_from_ws_event, resolution_payload
 
 UTC = dt.timezone.utc
 
@@ -76,6 +77,7 @@ class MarketRecorder:
         self.market_dir.mkdir(parents=True, exist_ok=True)
         self.raw_path = self.market_dir / "clob_raw.jsonl"
         self.metadata_path = self.market_dir / "metadata.json"
+        self.resolution_path = self.market_dir / "resolution.json"
         self.up = BookState(self.market.up_token_id)
         self.down = BookState(self.market.down_token_id)
         self.rows: list[dict[str, Any]] = []
@@ -85,7 +87,14 @@ class MarketRecorder:
         self.snapshots = 0
         self.reconnects = 0
         self.started_ts_ns = now_ns
+        self.resolution: ResolutionResult | None = None
         self._write_metadata(status="recording")
+
+    def _write_resolution(self, result: ResolutionResult) -> None:
+        if not result.resolved:
+            return
+        self.resolution = result
+        self.resolution_path.write_text(json.dumps(resolution_payload(result), indent=2), encoding="utf-8")
 
     def _write_metadata(self, *, status: str) -> None:
         payload = {
@@ -96,6 +105,7 @@ class MarketRecorder:
             "down_token_id": self.market.down_token_id,
             "market_end": self.market.end_iso,
             "resolution_source": self.market.resolution_source,
+            "resolution": None if self.resolution is None else resolution_payload(self.resolution),
             "started_ts_ns": self.started_ts_ns,
             "raw_events": self.raw_events,
             "snapshots": self.snapshots,
@@ -154,6 +164,12 @@ class MarketRecorder:
 
     def apply(self, envelope: WsEnvelope) -> bool:
         self.append_raw(envelope)
+
+        resolved = resolution_from_ws_event(envelope.event, self.market)
+        if resolved is not None and resolved.resolved:
+            self._write_resolution(resolved)
+            self._write_metadata(status="recording")
+
         up_changed = self.up.apply(envelope.event, envelope.received_ts_ns)
         down_changed = self.down.apply(envelope.event, envelope.received_ts_ns)
         if not (up_changed or down_changed):
@@ -203,7 +219,7 @@ async def record_one_market(
                 async with asyncio.timeout(remaining):
                     async for envelope in market_events(token_ids):
                         recorder.apply(envelope)
-                        if time.time() >= final_ts:
+                        if recorder.resolution is not None or time.time() >= final_ts:
                             break
                 break
             except TimeoutError:
