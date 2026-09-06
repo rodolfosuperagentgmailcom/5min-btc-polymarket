@@ -1,0 +1,58 @@
+version: 2
+name: btc_5m_probability_edge
+
+market:
+  slug_prefix: "btc-updown-5m-"
+  require_active: true
+  require_not_closed: true
+
+entry:
+  seconds_left_min: 90
+  seconds_left_max: 150
+
+market_quality:
+  max_selected_side_spread: 0.02
+  min_top_3_ask_notional_usd: 30
+  max_order_book_participation_pct: 20
+
+freshness:
+  clob_max_age_sec: 2.0
+  btc_max_age_sec: 3.0
+  max_consecutive_data_errors: 3
+
+signal:
+  minimum_absolute_btc_move_usd: 50
+  minimum_impulse_z: 1.0
+  require_30s_direction_agreement: true
+  require_15s_direction_agreement: false
+  minimum_model_probability: 0.58
+  minimum_edge_after_fees_and_slippage: 0.04
+
+risk:
+  max_trade_pct_equity: 0.50
+  max_position_loss_pct_equity: 0.75
+  max_daily_loss_pct_equity: 3.0
+  max_trades_per_day: 12
+  max_consecutive_losses: 3
+  automatic_hedge_enabled: false
+
+execution:
+  default_mode: "paper"
+  require_explicit_execute_flag: true
+  urgent_order_type: "FAK"
+  maker_order_type: "GTC"
+
+exit:
+  use_clob_best_bid_for_mark: true
+  thesis_exit_enabled: true
+  hold_to_resolution_when_positive_ev: true
+  fixed_time_exit_enabled: false
+
+research:
+  record_raw_market_data: true
+  output_format: "parquet"
+  minimum_forward_paper_signals_before_live_review: 500
+
+notes:
+  - "These are initial research defaults, not optimized parameters."
+  - "Live execution must remain disabled until replay and forward-paper evidence justify it."
