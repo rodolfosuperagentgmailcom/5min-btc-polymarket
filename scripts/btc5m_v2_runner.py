@@ -189,6 +189,7 @@ def main() -> int:
         "status": "v2_started",
         "mode": "paper",
         "entry_window_sec": [cfg.entry_min, cfg.entry_max],
+        "expected_resolution_source": cfg.expected_resolution_source,
         "max_selected_side_spread": cfg.max_spread,
         "min_top3_ask_notional_usd": cfg.min_depth,
         "live_orders": False,
@@ -228,7 +229,22 @@ def main() -> int:
             }
 
             if not candidates:
-                emit({**base, "status": "observe_no_threshold_candidate"})
+                source_gate = evaluate_market_gate(
+                    cfg,
+                    seconds_left=seconds_left,
+                    book=up_book,
+                    resolution_source=source,
+                    consecutive_data_errors=consecutive_errors,
+                )
+                source_reasons = [
+                    reason
+                    for reason in source_gate.reasons
+                    if reason in {"missing_resolution_source", "unexpected_resolution_source"}
+                ]
+                if source_reasons:
+                    emit({**base, "status": "market_blocked", "gate_reasons": source_reasons})
+                else:
+                    emit({**base, "status": "observe_no_threshold_candidate"})
                 time.sleep(args.poll_sec)
                 continue
 
@@ -238,6 +254,7 @@ def main() -> int:
                 cfg,
                 seconds_left=seconds_left,
                 book=selected,
+                resolution_source=source,
                 consecutive_data_errors=consecutive_errors,
             )
 
