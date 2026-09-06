@@ -20,15 +20,20 @@ mkdir -p "$RUNTIME_DIR"
 usage() {
   cat <<'EOF'
 Usage:
-  btc5m_ctl.sh start [--profile conservative|aggressive] [--entry-timeout-min N] [--stake-usd N] [--threshold N] [--poll-sec N] [--close-retry-max N] [--close-retry-delay-sec N]
+  btc5m_ctl.sh start [--profile conservative|aggressive] [--entry-timeout-min N] [--stake-usd N] [--threshold N] [--poll-sec N] [--close-retry-max N] [--close-retry-delay-sec N] [--execute]
   btc5m_ctl.sh status
   btc5m_ctl.sh stop
   btc5m_ctl.sh report [--limit N]
   btc5m_ctl.sh logs
 
+Safety:
+- start is DRY-RUN by default.
+- Live order placement requires the explicit --execute flag.
+- Never commit wallet private keys, API secrets, or .env files.
+
 Notes:
 - Runs in isolated skill runtime: skills/btc-5m-live/runtime
-- Uses auth/env from pm-hl-conservative-plus-repo/.env
+- Uses auth/env from pm-hl-conservative-plus-repo/.env only when present.
 EOF
 }
 
@@ -50,6 +55,7 @@ cmd_start() {
   local poll_sec="2"
   local close_retry_max="30"
   local close_retry_delay_sec="2"
+  local execute="false"
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -60,6 +66,7 @@ cmd_start() {
       --poll-sec) poll_sec="$2"; shift 2;;
       --close-retry-max) close_retry_max="$2"; shift 2;;
       --close-retry-delay-sec) close_retry_delay_sec="$2"; shift 2;;
+      --execute) execute="true"; shift;;
       *) echo "Unknown arg: $1"; usage; exit 2;;
     esac
   done
@@ -69,14 +76,23 @@ cmd_start() {
     return 0
   fi
 
-  local ts log
+  local ts log mode
   ts="$(date -u +%Y%m%dT%H%M%SZ)"
-  log="$RUNTIME_DIR/btc5m_${profile}_${ts}.log"
+  mode="dry-run"
+  [[ "$execute" == "true" ]] && mode="LIVE"
+  log="$RUNTIME_DIR/btc5m_${profile}_${mode}_${ts}.log"
 
   local -a runner_cmd
-  runner_cmd=("$VENV_PY" "$RUNNER" "--profile" "$profile" "--entry-timeout-min" "$entry_timeout_min" "--poll-sec" "$poll_sec" "--close-retry-max" "$close_retry_max" "--close-retry-delay-sec" "$close_retry_delay_sec" "--execute")
+  runner_cmd=("$VENV_PY" "$RUNNER" "--profile" "$profile" "--entry-timeout-min" "$entry_timeout_min" "--poll-sec" "$poll_sec" "--close-retry-max" "$close_retry_max" "--close-retry-delay-sec" "$close_retry_delay_sec")
   [[ -n "$stake_usd" ]] && runner_cmd+=("--stake-usd" "$stake_usd")
   [[ -n "$threshold" ]] && runner_cmd+=("--threshold" "$threshold")
+  [[ "$execute" == "true" ]] && runner_cmd+=("--execute")
+
+  if [[ "$execute" == "true" ]]; then
+    echo "WARNING: LIVE execution explicitly enabled."
+  else
+    echo "Starting in DRY-RUN mode (no live orders)."
+  fi
 
   (
     if [[ -f "$ENV_FILE" ]]; then
@@ -103,6 +119,8 @@ cmd_start() {
   "pollSec": $poll_sec,
   "closeRetryMax": $close_retry_max,
   "closeRetryDelaySec": $close_retry_delay_sec,
+  "execute": $execute,
+  "mode": "$mode",
   "log": "$log",
   "repo": "$REPO"
 }
@@ -110,7 +128,7 @@ JSON
 
   sleep 1
   if ps -p "$pid" >/dev/null 2>&1; then
-    echo "started pid=$pid log=$log"
+    echo "started pid=$pid mode=$mode log=$log"
   else
     echo "failed_to_start (check $log)"
     exit 1
