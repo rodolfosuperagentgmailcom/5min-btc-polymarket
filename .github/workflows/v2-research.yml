@@ -4,8 +4,8 @@ on:
   pull_request:
     paths:
       - "btc5m_v2/**"
-      - "scripts/btc5m_v2_record.py"
-      - "tests/test_v2_research.py"
+      - "scripts/btc5m_v2_*.py"
+      - "tests/test_v2_*.py"
       - "requirements-v2.txt"
       - ".github/workflows/v2-research.yml"
   push:
@@ -22,4 +22,4 @@ jobs:
           python-version: "3.12"
       - run: python -m pip install --upgrade pip
       - run: pip install -r requirements-v2.txt
-      - run: PYTHONPATH=. pytest -q tests/test_v2_safety.py tests/test_v2_research.py
+      - run: PYTHONPATH=. pytest -q tests/test_v2_*.py
