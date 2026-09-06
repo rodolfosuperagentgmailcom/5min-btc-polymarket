@@ -1,0 +1,4 @@
+requests>=2.31,<3
+PyYAML>=6.0,<7
+py-clob-client>=0.34,<1
+pytest>=8,<9

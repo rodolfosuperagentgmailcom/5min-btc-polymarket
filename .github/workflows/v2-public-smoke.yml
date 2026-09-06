@@ -1,0 +1,26 @@
+name: BTC5M V2 Public Smoke
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - btc5m-v2-safety
+    paths:
+      - "scripts/btc5m_v2_public_smoke.py"
+      - "scripts/btc5m_v2_runner.py"
+      - "btc5m_v2/config.py"
+      - "btc5m_v2/safety.py"
+      - "config/btc_5m_v2.yaml"
+      - "requirements-v2.txt"
+      - ".github/workflows/v2-public-smoke.yml"
+
+jobs:
+  public-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements-v2.txt
+      - run: PYTHONPATH=. python scripts/btc5m_v2_public_smoke.py
