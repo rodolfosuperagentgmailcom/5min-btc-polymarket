@@ -1,0 +1,67 @@
+name: BTC5M V2 Recorder Smoke
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - btc5m-v2-research
+    paths:
+      - "btc5m_v2/feeds/polymarket_ws.py"
+      - "btc5m_v2/market.py"
+      - "btc5m_v2/research/recorder.py"
+      - "scripts/btc5m_v2_record.py"
+      - "config/btc_5m_v2.yaml"
+      - "requirements-v2.txt"
+      - ".github/workflows/v2-recorder-smoke.yml"
+
+jobs:
+  recorder-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements-v2.txt
+      - name: Record public market data
+        run: PYTHONPATH=. python scripts/btc5m_v2_record.py --duration-sec 12 --output-root runtime/smoke --parquet-batch-rows 5
+      - name: Validate JSONL and Parquet artifacts
+        run: |
+          PYTHONPATH=. python - <<'PY'
+          import json
+          from pathlib import Path
+          import pyarrow.parquet as pq
+
+          root = Path("runtime/smoke")
+          raw = sorted(root.glob("*/*/clob_raw.jsonl"))
+          parquet = sorted(root.glob("*/*/clob_snapshots_part-*.parquet"))
+          metadata = sorted(root.glob("*/*/metadata.json"))
+          assert raw, "no raw JSONL recorded"
+          assert parquet, "no Parquet snapshots recorded"
+          assert metadata, "no metadata file recorded"
+
+          raw_lines = raw[0].read_text(encoding="utf-8").splitlines()
+          assert raw_lines, "raw JSONL is empty"
+          first_raw = json.loads(raw_lines[0])
+          assert "received_ts_ns" in first_raw
+          assert "event" in first_raw
+
+          table = pq.read_table(parquet[0])
+          assert table.num_rows > 0, "Parquet has no snapshots"
+          required = {"received_ts_ns", "seconds_left", "up_bid", "up_ask", "down_bid", "down_ask"}
+          assert required.issubset(set(table.column_names))
+
+          meta = json.loads(metadata[0].read_text(encoding="utf-8"))
+          assert meta["credentials_loaded"] is False
+          assert meta["order_path_used"] is False
+          assert meta["raw_events"] > 0
+          assert meta["snapshots"] > 0
+
+          print(json.dumps({
+              "status": "recorder_smoke_ok",
+              "raw_events": meta["raw_events"],
+              "snapshots": meta["snapshots"],
+              "parquet_rows_first_part": table.num_rows,
+              "resolution_source": meta["resolution_source"],
+          }, indent=2))
+          PY
