@@ -8,27 +8,29 @@ The V2 signal should not buy simply because one side is already expensive. It sh
 
 ## Milestone 1 — SAFE (P0)
 
-- [ ] Load risk/profile configuration from YAML.
-- [ ] Enforce a bounded entry window (research default: 90–150 seconds remaining).
-- [ ] Validate spread for the selected token, not the minimum spread across both outcomes.
-- [ ] Enforce selected-side spread and depth limits before entry.
-- [ ] Remove permissive execution defaults (`PM_MAX_SPREAD=1`, `PM_MIN_TOP_ASK_NOTIONAL_USD=0`).
-- [ ] Use executable CLOB bids for position marks and stop logic.
-- [ ] Add quote-staleness and consecutive-data-error circuit breakers.
-- [ ] Add session limits: max daily loss, max trades/day, consecutive-loss stop.
-- [ ] Disable automatic hedge by default.
-- [ ] Make dry-run/paper mode the controller default; live execution must be explicit.
-- [ ] Add tests for each safety gate.
+- [x] Load V2 risk/profile configuration from YAML.
+- [x] Enforce a bounded entry window (research default: 90–150 seconds remaining).
+- [x] Validate spread for the selected token, not the minimum spread across both outcomes.
+- [x] Enforce selected-side spread and depth limits before a paper signal can pass.
+- [ ] Remove permissive execution defaults (`PM_MAX_SPREAD=1`, `PM_MIN_TOP_ASK_NOTIONAL_USD=0`) from the legacy live execution path before any future live adapter is enabled.
+- [x] Define V2 position marks from executable CLOB best bid rather than Gamma outcome price.
+- [x] Add quote-staleness and consecutive-data-error circuit breakers.
+- [ ] Enforce session limits in an executor: max daily loss, max trades/day, consecutive-loss stop. Values are configured now; execution remains disabled.
+- [x] Disable automatic hedge by default.
+- [x] Make V2 dry-run/paper mode the controller default and block V2 `--execute` entirely during research.
+- [x] Add tests for current safety gates.
+- [x] Fail closed if the BTC 5-minute market resolution source is missing or differs from the configured Chainlink BTC/USD 60-second TWAP source.
 
 ## Milestone 2 — DATA (P0)
 
-- [ ] Polymarket market WebSocket feed.
+- [x] Polymarket public market WebSocket feed.
 - [ ] Settlement-aligned BTC source adapter.
-- [ ] Record exchange timestamp and local receive timestamp.
-- [ ] Record UP/DOWN bid, ask, spread, and depth.
+- [x] Record exchange timestamps and local receive timestamps for CLOB events.
+- [x] Record UP/DOWN bid, ask, spread, and top-3 depth.
 - [ ] Record BTC reference, current value, delta, 15s/30s/60s momentum, and realized volatility.
-- [ ] Store raw/replayable data in Parquet.
+- [x] Store raw WebSocket events in append-only JSONL and normalized snapshots in fixed-schema Zstd Parquet parts.
 - [ ] Attach final market resolution to each 5-minute event.
+- [x] Add live public WebSocket and end-to-end recorder smoke workflows with no credentials or order path.
 
 ## Milestone 3 — EDGE (P1)
 
@@ -43,11 +45,19 @@ The V2 signal should not buy simply because one side is already expensive. It sh
 
 ## Milestone 4 — PAPER (P1)
 
-- [ ] Pure signal function shared by replay, paper, and live adapters.
+- [ ] Pure signal function shared by replay, paper, and any future live adapter.
 - [ ] Paper executor with realistic fills, fees, slippage, and latency.
 - [ ] Walk-forward/out-of-sample evaluation.
 - [ ] Performance report: trades, win rate, gross/net P&L, fees, slippage, profit factor, max drawdown, calibration.
 - [ ] Minimum 500 independent forward-paper signals before any live-sizing discussion.
+
+## Verification record
+
+- Safety CI: passing.
+- Public Gamma/CLOB safety smoke: passing.
+- Public CLOB WebSocket smoke: passing; observed exchange-to-receive age around 48 ms in the 2026-09-06 smoke run.
+- End-to-end recorder smoke: passing; a 12-second public-data run recorded 2,718 raw events and 2,598 normalized snapshots and successfully reopened the generated Parquet.
+- No wallet credentials were loaded and no order path was used by V2 smoke/recorder workflows.
 
 ## Live execution policy
 
