@@ -12,6 +12,18 @@ class V2Config:
     raw: dict[str, Any]
 
     @property
+    def expected_resolution_source(self) -> str:
+        return str(self.raw["resolution"]["expected_source"]).strip()
+
+    @property
+    def fail_if_resolution_source_missing(self) -> bool:
+        return bool(self.raw["resolution"].get("fail_if_missing", True))
+
+    @property
+    def fail_if_resolution_source_unexpected(self) -> bool:
+        return bool(self.raw["resolution"].get("fail_if_unexpected", True))
+
+    @property
     def entry_min(self) -> float:
         return float(self.raw["entry"]["seconds_left_min"])
 
@@ -47,4 +59,7 @@ def load_config(path: str | Path | None = None) -> V2Config:
         raise ValueError("V2 config must be a YAML mapping")
     if int(data.get("version", 0)) != 2:
         raise ValueError("Expected V2 config version 2")
+    resolution = data.get("resolution")
+    if not isinstance(resolution, dict) or not str(resolution.get("expected_source") or "").strip():
+        raise ValueError("V2 config requires resolution.expected_source")
     return V2Config(data)
