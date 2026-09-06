@@ -15,7 +15,14 @@ from py_clob_client.client import ClobClient
 from py_clob_client.constants import POLYGON
 
 from btc5m_v2.config import load_config
-from btc5m_v2_runner import metrics_from_book, parse_market, resolve_current_market, snapshot_dict, ts_utc
+from btc5m_v2_runner import (
+    metrics_from_book,
+    parse_market,
+    resolution_source,
+    resolve_current_market,
+    snapshot_dict,
+    ts_utc,
+)
 
 
 def main() -> int:
@@ -37,6 +44,7 @@ def main() -> int:
         "slug": slug,
         "market_end": end_iso,
         "seconds_left": round(seconds_left, 3),
+        "resolution_source": resolution_source(market),
         "up": snapshot_dict(up),
         "down": snapshot_dict(down),
         "credentials_loaded": False,
