@@ -63,7 +63,18 @@ def resolve_current_market(slug_prefix: str) -> dict[str, Any] | None:
     if market.get("closed") is True or market.get("active") is False:
         return None
     market["_event_slug"] = slug
+    market["_event_resolution_source"] = event.get("resolutionSource")
+    market["_event_description"] = event.get("description")
     return market
+
+
+def resolution_source(market: dict[str, Any]) -> str:
+    """Return the most specific Gamma resolution source available."""
+    return str(
+        market.get("resolutionSource")
+        or market.get("_event_resolution_source")
+        or ""
+    ).strip()
 
 
 def parse_market(market: dict[str, Any]) -> tuple[str, str, str, str, float]:
@@ -193,6 +204,7 @@ def main() -> int:
                 continue
 
             up_token, down_token, slug, end_iso, seconds_left = parse_market(market)
+            source = resolution_source(market)
             up_book = metrics_from_book(clob.get_order_book(up_token))
             down_book = metrics_from_book(clob.get_order_book(down_token))
             consecutive_errors = 0
@@ -209,6 +221,7 @@ def main() -> int:
                 "slug": slug,
                 "market_end": end_iso,
                 "seconds_left": round(seconds_left, 3),
+                "resolution_source": source,
                 "up": snapshot_dict(up_book),
                 "down": snapshot_dict(down_book),
                 "benchmark_threshold": args.threshold,
