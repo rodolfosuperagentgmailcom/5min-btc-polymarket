@@ -17,6 +17,34 @@ from btc5m_v2.market import MarketInfo, discover_current_market
 
 UTC = dt.timezone.utc
 
+SNAPSHOT_SCHEMA = pa.schema(
+    [
+        ("slug", pa.string()),
+        ("condition_id", pa.string()),
+        ("resolution_source", pa.string()),
+        ("market_end", pa.string()),
+        ("received_ts_ns", pa.int64()),
+        ("received_iso", pa.string()),
+        ("event_type", pa.string()),
+        ("event_exchange_ts_ms", pa.int64()),
+        ("seconds_left", pa.float64()),
+        ("up_bid", pa.float64()),
+        ("up_ask", pa.float64()),
+        ("up_spread", pa.float64()),
+        ("up_bid_depth_3_usd", pa.float64()),
+        ("up_ask_depth_3_usd", pa.float64()),
+        ("up_exchange_ts_ms", pa.int64()),
+        ("up_exchange_age_ms", pa.float64()),
+        ("down_bid", pa.float64()),
+        ("down_ask", pa.float64()),
+        ("down_spread", pa.float64()),
+        ("down_bid_depth_3_usd", pa.float64()),
+        ("down_ask_depth_3_usd", pa.float64()),
+        ("down_exchange_ts_ms", pa.int64()),
+        ("down_exchange_age_ms", pa.float64()),
+    ]
+)
+
 
 def utc_date_from_ns(value: int) -> str:
     return dt.datetime.fromtimestamp(value / 1_000_000_000, tz=UTC).date().isoformat()
@@ -55,6 +83,7 @@ class MarketRecorder:
         self.part_number = len(existing)
         self.raw_events = 0
         self.snapshots = 0
+        self.reconnects = 0
         self.started_ts_ns = now_ns
         self._write_metadata(status="recording")
 
@@ -70,6 +99,7 @@ class MarketRecorder:
             "started_ts_ns": self.started_ts_ns,
             "raw_events": self.raw_events,
             "snapshots": self.snapshots,
+            "reconnects": self.reconnects,
             "credentials_loaded": False,
             "order_path_used": False,
         }
@@ -142,7 +172,7 @@ class MarketRecorder:
         if not self.rows:
             return None
         path = self.market_dir / f"clob_snapshots_part-{self.part_number:06d}.parquet"
-        table = pa.Table.from_pylist(self.rows)
+        table = pa.Table.from_pylist(self.rows, schema=SNAPSHOT_SCHEMA)
         pq.write_table(table, path, compression="zstd")
         self.rows.clear()
         self.part_number += 1
@@ -163,16 +193,28 @@ async def record_one_market(
 ) -> MarketRecorder:
     recorder = MarketRecorder(market, output_root=output_root, parquet_batch_rows=parquet_batch_rows)
     token_ids = [market.up_token_id, market.down_token_id]
-    timeout_sec = max(0.1, min(stop_ts, market.end_ts + 2.0) - time.time())
+    final_ts = min(stop_ts, market.end_ts + 2.0)
     status = "complete"
+
     try:
-        async with asyncio.timeout(timeout_sec):
-            async for envelope in market_events(token_ids):
-                recorder.apply(envelope)
-                if time.time() >= stop_ts or time.time() >= market.end_ts + 1.0:
+        while time.time() < final_ts:
+            remaining = max(0.1, final_ts - time.time())
+            try:
+                async with asyncio.timeout(remaining):
+                    async for envelope in market_events(token_ids):
+                        recorder.apply(envelope)
+                        if time.time() >= final_ts:
+                            break
+                break
+            except TimeoutError:
+                status = "timeout"
+                break
+            except Exception:
+                recorder.reconnects += 1
+                recorder._write_metadata(status="reconnecting")
+                if time.time() >= final_ts:
                     break
-    except TimeoutError:
-        status = "timeout"
+                await asyncio.sleep(min(1.0, max(0.0, final_ts - time.time())))
     except Exception:
         status = "error"
         raise
