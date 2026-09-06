@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Iterable
+from urllib.parse import urlsplit, urlunsplit
 
 from .config import V2Config
 
@@ -21,14 +22,47 @@ class GateResult:
     reasons: tuple[str, ...]
 
 
+def normalize_resolution_source(source: str | None) -> str:
+    """Normalize a resolution-source URL for strict, stable comparison."""
+    raw = str(source or "").strip()
+    if not raw:
+        return ""
+    try:
+        parts = urlsplit(raw)
+    except Exception:
+        return raw.lower().rstrip("/")
+    if not parts.scheme or not parts.netloc:
+        return raw.lower().rstrip("/")
+    path = parts.path.rstrip("/") or "/"
+    return urlunsplit((parts.scheme.lower(), parts.netloc.lower(), path, "", ""))
+
+
+def resolution_source_reasons(cfg: V2Config, source: str | None) -> tuple[str, ...]:
+    """Fail closed when Gamma omits or changes the configured settlement source."""
+    actual = normalize_resolution_source(source)
+    expected = normalize_resolution_source(cfg.expected_resolution_source)
+    reasons: list[str] = []
+
+    if not actual:
+        if cfg.fail_if_resolution_source_missing:
+            reasons.append("missing_resolution_source")
+        return tuple(reasons)
+
+    if actual != expected and cfg.fail_if_resolution_source_unexpected:
+        reasons.append("unexpected_resolution_source")
+
+    return tuple(reasons)
+
+
 def evaluate_market_gate(
     cfg: V2Config,
     *,
     seconds_left: float,
     book: BookMetrics,
+    resolution_source: str | None,
     consecutive_data_errors: int = 0,
 ) -> GateResult:
-    reasons: list[str] = []
+    reasons: list[str] = list(resolution_source_reasons(cfg, resolution_source))
 
     if seconds_left < cfg.entry_min:
         reasons.append("too_late")
