@@ -1,0 +1,25 @@
+name: BTC5M V2 Safety
+
+on:
+  pull_request:
+    paths:
+      - "btc5m_v2/**"
+      - "tests/**"
+      - "config/btc_5m_v2.yaml"
+      - "requirements-v2.txt"
+      - ".github/workflows/v2-safety.yml"
+  push:
+    branches:
+      - btc5m-v2-safety
+
+jobs:
+  safety-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --upgrade pip
+      - run: pip install -r requirements-v2.txt
+      - run: pytest -q tests/test_v2_safety.py
