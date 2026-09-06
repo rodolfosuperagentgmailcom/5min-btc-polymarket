@@ -6,6 +6,11 @@ market:
   require_active: true
   require_not_closed: true
 
+resolution:
+  expected_source: "https://data.chain.link/streams/btc-usd-twap-60s-streams"
+  fail_if_missing: true
+  fail_if_unexpected: true
+
 entry:
   seconds_left_min: 90
   seconds_left_max: 150
@@ -56,3 +61,4 @@ research:
 notes:
   - "These are initial research defaults, not optimized parameters."
   - "Live execution must remain disabled until replay and forward-paper evidence justify it."
+  - "Resolution source validation is fail-closed; a changed or missing settlement source blocks the market."
