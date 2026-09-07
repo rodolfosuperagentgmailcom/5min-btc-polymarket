@@ -23,12 +23,34 @@ jobs:
     permissions:
       contents: read
       actions: read
-    env:
-      SOURCE_RUN_ID: ${{ inputs.source_run_id || '34159998459' }}
-      LEGACY_THRESHOLD: ${{ inputs.legacy_threshold || '0.70' }}
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Resolve reconciliation inputs
+        shell: bash
+        env:
+          INPUT_SOURCE_RUN_ID: ${{ inputs.source_run_id || '' }}
+          INPUT_LEGACY_THRESHOLD: ${{ inputs.legacy_threshold || '0.70' }}
+        run: |
+          set -euo pipefail
+          source_run_id="$INPUT_SOURCE_RUN_ID"
+          if [ -z "$source_run_id" ]; then
+            source_run_id=$(awk -F': ' '$1 == "source_run_id" {print $2}' .github/reconcile-trigger.txt | tail -1 | tr -d '[:space:]')
+          fi
+          if ! [[ "$source_run_id" =~ ^[0-9]+$ ]]; then
+            echo "invalid or missing source_run_id: $source_run_id" >&2
+            exit 1
+          fi
+          python - "$INPUT_LEGACY_THRESHOLD" <<'PY'
+          import sys
+          threshold = float(sys.argv[1])
+          if not 0.50 <= threshold <= 0.99:
+              raise SystemExit("legacy_threshold must be between 0.50 and 0.99")
+          PY
+          echo "SOURCE_RUN_ID=$source_run_id" >> "$GITHUB_ENV"
+          echo "LEGACY_THRESHOLD=$INPUT_LEGACY_THRESHOLD" >> "$GITHUB_ENV"
+          echo "source_run_id=$source_run_id legacy_threshold=$INPUT_LEGACY_THRESHOLD"
 
       - uses: actions/setup-python@v5
         with:
