@@ -1,6 +1,11 @@
 name: BTC5M V2 Evidence Collection
 
 on:
+  push:
+    branches:
+      - btc5m-v2-research
+    paths:
+      - ".github/workflows/v2-evidence-collection.yml"
   workflow_dispatch:
     inputs:
       duration_minutes:
@@ -18,6 +23,9 @@ jobs:
     timeout-minutes: 195
     permissions:
       contents: read
+    env:
+      EVIDENCE_DURATION_MINUTES: ${{ github.event_name == 'workflow_dispatch' && inputs.duration_minutes || '5' }}
+      EVIDENCE_LEGACY_THRESHOLD: ${{ github.event_name == 'workflow_dispatch' && inputs.legacy_threshold || '0.70' }}
 
     steps:
       - uses: actions/checkout@v4
@@ -29,13 +37,11 @@ jobs:
       - run: python -m pip install --upgrade pip
       - run: pip install -r requirements-v2.txt
 
-      - name: Validate manual inputs
+      - name: Validate evidence inputs
         shell: bash
         run: |
           set -euo pipefail
-          minutes='${{ inputs.duration_minutes }}'
-          threshold='${{ inputs.legacy_threshold }}'
-          python - "$minutes" "$threshold" <<'PY'
+          python - "$EVIDENCE_DURATION_MINUTES" "$EVIDENCE_LEGACY_THRESHOLD" <<'PY'
           import sys
           minutes = int(sys.argv[1])
           threshold = float(sys.argv[2])
@@ -50,7 +56,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          seconds=$(( ${{ inputs.duration_minutes }} * 60 ))
+          seconds=$(( EVIDENCE_DURATION_MINUTES * 60 ))
           PYTHONPATH=. python scripts/btc5m_v2_record.py \
             --duration-sec "$seconds" \
             --output-root runtime/data \
@@ -135,7 +141,7 @@ jobs:
         run: >-
           PYTHONPATH=. python scripts/btc5m_v2_paper_benchmark.py
           --input-root runtime/data
-          --threshold '${{ inputs.legacy_threshold }}'
+          --threshold "$EVIDENCE_LEGACY_THRESHOLD"
           --notional-usd 5
           --max-participation-pct 20
           --latency-ms 0 100 250 500 1000
@@ -146,6 +152,7 @@ jobs:
         run: |
           python - <<'PY'
           import json
+          import os
           from pathlib import Path
           import pyarrow.parquet as pq
 
@@ -170,12 +177,13 @@ jobs:
               "mode": "public-data-only",
               "live_execution": False,
               "credentials_loaded": False,
+              "duration_minutes": int(os.environ["EVIDENCE_DURATION_MINUTES"]),
               "markets_recorded": len(records),
               "markets_resolved": len(resolved),
               "markets_uninterrupted": len(uninterrupted),
               "btc_reference_verified_markets": btc_verified,
               "feature_rows": feature_rows,
-              "legacy_threshold": float('${{ inputs.legacy_threshold }}'),
+              "legacy_threshold": float(os.environ["EVIDENCE_LEGACY_THRESHOLD"]),
               "legacy_latency_sweep": legacy,
           }
           Path("runtime/research/evidence_manifest.json").write_text(
