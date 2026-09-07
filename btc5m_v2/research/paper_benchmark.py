@@ -9,6 +9,7 @@ from typing import Any, Iterable
 from btc5m_v2.execution.paper import PaperBuyResult, simulate_taker_buy_to_settlement
 from btc5m_v2.research.book_replay import reconstruct_and_align_books
 from btc5m_v2.research.fee_enrich import read_fee_schedule
+from btc5m_v2.research.quality import require_contiguous_recording
 from btc5m_v2.research.replay import iter_snapshot_rows, read_resolution
 
 
@@ -98,6 +99,11 @@ def benchmark_market_paper(
     require_fee_schedule: bool = True,
 ) -> tuple[PaperBenchmarkTrade | None, str | None]:
     directory = Path(market_dir)
+    try:
+        require_contiguous_recording(directory)
+    except ValueError as exc:
+        return None, str(exc)
+
     resolved, winning_side = read_resolution(directory)
     if not resolved or winning_side not in {"UP", "DOWN"}:
         return None, "unresolved_market"
@@ -240,6 +246,7 @@ def benchmark_paper_root(
         "latency_ms": float(latency_ms),
         "max_participation_pct": float(max_participation_pct),
         "fee_schedule_required": bool(require_fee_schedule),
+        "recording_quality_required": "reconnects == 0",
         "markets_seen": len(directories),
         "executed_trades": len(trades),
         "wins": wins,
