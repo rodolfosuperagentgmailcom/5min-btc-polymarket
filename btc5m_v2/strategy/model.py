@@ -41,14 +41,17 @@ class LogisticProbabilityModel:
             return None
         return number if math.isfinite(number) else None
 
+    def missing_features(self, row: Mapping[str, Any]) -> tuple[str, ...]:
+        return tuple(
+            name
+            for name in self.feature_columns
+            if self._finite_number(row.get(name)) is None
+        )
+
     def vectorize(self, row: Mapping[str, Any]) -> tuple[float, ...] | None:
-        values: list[float] = []
-        for name in self.feature_columns:
-            number = self._finite_number(row.get(name))
-            if number is None:
-                return None
-            values.append(number)
-        return tuple(values)
+        if self.missing_features(row):
+            return None
+        return tuple(float(row[name]) for name in self.feature_columns)
 
     def predict_up(self, row: Mapping[str, Any]) -> float | None:
         values = self.vectorize(row)
