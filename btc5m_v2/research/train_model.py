@@ -73,7 +73,14 @@ def select_market_decision_rows(
     seconds_left_min: float = 90.0,
     seconds_left_max: float = 150.0,
 ) -> list[dict[str, Any]]:
-    """Select one causal decision snapshot per independent 5-minute market."""
+    """Select one causal decision snapshot per independent 5-minute market.
+
+    A live strategy cannot look at snapshots on both sides of the target and then
+    choose whichever happened to be numerically closest. For each market we
+    therefore choose the first observable row at or after the countdown crosses
+    the target (``seconds_left <= target``). Rows are constrained to the configured
+    decision window and processed in receive-time order.
+    """
 
     grouped: dict[str, list[dict[str, Any]]] = {}
     for raw in rows:
@@ -89,15 +96,14 @@ def select_market_decision_rows(
 
     selected: list[dict[str, Any]] = []
     target = float(target_seconds_left)
-    for slug, candidates in grouped.items():
-        chosen = min(
-            candidates,
-            key=lambda row: (
-                abs(float(row["seconds_left"]) - target),
-                int(row.get("received_ts_ns") or 0),
-            ),
+    for candidates in grouped.values():
+        chronological = sorted(candidates, key=lambda row: int(row.get("received_ts_ns") or 0))
+        chosen = next(
+            (row for row in chronological if float(row["seconds_left"]) <= target),
+            None,
         )
-        selected.append(chosen)
+        if chosen is not None:
+            selected.append(chosen)
 
     selected.sort(key=lambda row: int(row.get("received_ts_ns") or 0))
     return selected
@@ -260,6 +266,7 @@ def fit_logistic_baseline(
         "model_version": model.model_version,
         "feature_columns": list(columns),
         "decision_target_seconds_left": float(target_seconds_left),
+        "decision_selection": "first_snapshot_after_target_crossing",
         "decision_window_seconds_left": [float(seconds_left_min), float(seconds_left_max)],
         "recording_quality": "reconnects_required_zero",
         "markets_selected": len(decision_rows),
