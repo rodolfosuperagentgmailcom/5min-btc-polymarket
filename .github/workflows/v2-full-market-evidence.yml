@@ -7,6 +7,11 @@ on:
         description: "Legacy stronger-side ask threshold"
         required: true
         default: "0.70"
+  push:
+    branches:
+      - btc5m-v2-research
+    paths:
+      - ".github/evidence-trigger.txt"
 
 jobs:
   full-market-evidence:
@@ -15,7 +20,7 @@ jobs:
     permissions:
       contents: read
     env:
-      LEGACY_THRESHOLD: ${{ inputs.legacy_threshold }}
+      LEGACY_THRESHOLD: ${{ inputs.legacy_threshold || '0.70' }}
 
     steps:
       - uses: actions/checkout@v4
@@ -140,6 +145,7 @@ jobs:
               "mode": "public-data-only-boundary-aligned",
               "live_execution": False,
               "credentials_loaded": False,
+              "trigger": "workflow_dispatch" if "${{ github.event_name }}" == "workflow_dispatch" else "one_shot_push",
               "readiness": json.loads(readiness_path.read_text(encoding="utf-8")),
               "legacy_latency_sweep": json.loads(latency_path.read_text(encoding="utf-8")),
           }
