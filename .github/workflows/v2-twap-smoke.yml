@@ -1,0 +1,59 @@
+name: BTC5M V2 TWAP Smoke
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - btc5m-v2-research
+    paths:
+      - "btc5m_v2/feeds/polymarket_twap.py"
+      - "btc5m_v2/research/twap_store.py"
+      - "scripts/btc5m_v2_record_twap.py"
+      - ".github/workflows/v2-twap-smoke.yml"
+
+jobs:
+  public-twap-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --upgrade pip
+      - run: pip install -r requirements-v2.txt
+      - name: Record public Chainlink 60s TWAP via Polymarket RTDS
+        run: |
+          PYTHONPATH=. python scripts/btc5m_v2_record_twap.py \
+            --duration-sec 20 \
+            --output-root runtime/twap-smoke \
+            --batch-rows 5
+      - name: Validate recorded TWAP Parquet
+        run: |
+          PYTHONPATH=. python - <<'PY'
+          from pathlib import Path
+          import json
+          import pyarrow.parquet as pq
+
+          root = Path("runtime/twap-smoke")
+          files = sorted(root.glob("btc_usd_twap_60s_part-*.parquet"))
+          assert files, "no TWAP parquet parts written"
+          rows = []
+          for path in files:
+              rows.extend(pq.read_table(path).to_pylist())
+          assert rows, "no TWAP observations recorded"
+          assert all(row["symbol"] == "btc/usd" for row in rows)
+          assert all(row["window_seconds"] == 60 for row in rows)
+          timestamps = [int(row["chainlink_ts_ms"]) for row in rows]
+          gaps = [right - left for left, right in zip(timestamps, timestamps[1:])]
+          summary = {
+              "observations": len(rows),
+              "first_chainlink_ts_ms": timestamps[0],
+              "last_chainlink_ts_ms": timestamps[-1],
+              "timestamp_gaps_ms": gaps[:20],
+              "max_chainlink_age_ms": max(float(row["chainlink_age_ms"]) for row in rows),
+              "first_price": rows[0]["exact_value"],
+              "last_price": rows[-1]["exact_value"],
+          }
+          print(json.dumps(summary, indent=2))
+          PY
