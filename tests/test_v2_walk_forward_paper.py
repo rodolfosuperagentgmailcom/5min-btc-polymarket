@@ -33,6 +33,7 @@ def _rows(count: int = 12) -> list[dict]:
                 "slug": f"btc-updown-5m-{index}",
                 "received_ts_ns": (index + 1) * 1_000_000_000,
                 "seconds_left": 120.0,
+                "recording_reconnects": 0,
                 "signal_x": 1.0 if label else -1.0,
                 "label_up": label,
             }
@@ -45,7 +46,7 @@ def test_walk_forward_paper_uses_past_only_training_windows(tmp_path, monkeypatc
         market_dir = tmp_path / "2026-09-07" / row["slug"]
         market_dir.mkdir(parents=True)
         (market_dir / "metadata.json").write_text(
-            json.dumps({"slug": row["slug"]}), encoding="utf-8"
+            json.dumps({"slug": row["slug"], "reconnects": 0}), encoding="utf-8"
         )
 
     seen_train_counts: list[int] = []
@@ -76,8 +77,6 @@ def test_walk_forward_paper_uses_past_only_training_windows(tmp_path, monkeypatc
     assert result["fold_count"] == 3
     assert result["same_market_cross_split_possible"] is False
     assert result["live_trading_approved"] is False
-    # Two held-out markets are evaluated per fold, so each training-window size
-    # should appear twice in the model benchmark calls.
     assert seen_train_counts == [6, 6, 8, 8, 10, 10]
     assert seen_train_end == [6_000_000_000, 6_000_000_000, 8_000_000_000, 8_000_000_000, 10_000_000_000, 10_000_000_000]
 
