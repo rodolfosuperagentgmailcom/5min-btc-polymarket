@@ -113,6 +113,7 @@ jobs:
                       remaining.append(path)
               return remaining
 
+          remaining = []
           for attempt in range(1, 25):
               subprocess.run(
                   [sys.executable, "scripts/btc5m_v2_resolve.py", "--output-root", "runtime/data", "--force"],
@@ -123,12 +124,36 @@ jobs:
               print(f"resolution_attempt={attempt} unresolved={len(remaining)}")
               if not remaining:
                   break
-              if attempt == 24:
-                  print("Unresolved markets after polling:")
-                  for path in remaining:
-                      print(path)
-                  raise SystemExit(2)
-              time.sleep(10)
+              if attempt < 24:
+                  time.sleep(10)
+
+          if remaining:
+              print("Unresolved markets remain excluded from label-dependent analysis:")
+              for path in remaining:
+                  print(path)
+          PY
+
+      - name: Write V2 readiness report
+        shell: bash
+        run: |
+          set -euo pipefail
+          PYTHONPATH=. python - <<'PY'
+          import json
+          from pathlib import Path
+          from btc5m_v2.research.readiness import readiness_report
+
+          output = Path("runtime/research/readiness.json")
+          output.parent.mkdir(parents=True, exist_ok=True)
+          report = readiness_report("runtime/data")
+          output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+          print(json.dumps({
+              "markets_seen": report["markets_seen"],
+              "v2_ready_markets": report["v2_ready_markets"],
+              "decision_window_markets": report.get("decision_window_markets"),
+              "resolved_markets": report["resolved_markets"],
+              "verified_btc_reference_markets": report["verified_btc_reference_markets"],
+              "reason_counts": report["reason_counts"],
+          }, indent=2, sort_keys=True))
           PY
 
       - name: Build causal research dataset
@@ -160,6 +185,11 @@ jobs:
           metadata_paths = sorted(Path("runtime/data").glob("*/*/metadata.json"))
           records = [json.loads(path.read_text(encoding="utf-8")) for path in metadata_paths]
           resolved = [row for row in records if (row.get("resolution") or {}).get("resolved") is True]
+          unresolved_slugs = [
+              str(row.get("slug") or "")
+              for row in records
+              if (row.get("resolution") or {}).get("resolved") is not True
+          ]
           uninterrupted = [row for row in records if row.get("reconnects") == 0]
           btc_verified = 0
           for path in metadata_paths:
@@ -174,6 +204,8 @@ jobs:
           feature_rows = pq.read_table(feature_path).num_rows if feature_path.exists() else 0
           legacy_path = Path("runtime/research/legacy_latency_sweep.json")
           legacy = json.loads(legacy_path.read_text(encoding="utf-8")) if legacy_path.exists() else None
+          readiness_path = Path("runtime/research/readiness.json")
+          readiness = json.loads(readiness_path.read_text(encoding="utf-8")) if readiness_path.exists() else None
           manifest = {
               "mode": "public-data-only",
               "live_execution": False,
@@ -181,11 +213,13 @@ jobs:
               "duration_minutes": int(os.environ["EVIDENCE_DURATION_MINUTES"]),
               "markets_recorded": len(records),
               "markets_resolved": len(resolved),
+              "unresolved_slugs": unresolved_slugs,
               "markets_uninterrupted": len(uninterrupted),
               "btc_reference_verified_markets": btc_verified,
               "feature_rows": feature_rows,
               "legacy_threshold": float(os.environ["EVIDENCE_LEGACY_THRESHOLD"]),
               "legacy_latency_sweep": legacy,
+              "readiness": readiness,
           }
           Path("runtime/research/evidence_manifest.json").write_text(
               json.dumps(manifest, indent=2, sort_keys=True) + "\n",
