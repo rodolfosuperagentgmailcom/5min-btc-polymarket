@@ -54,6 +54,18 @@ def _finite(value: Any) -> float | None:
     return number if math.isfinite(number) else None
 
 
+def _validate_recording_quality_rows(rows: Sequence[dict[str, Any]]) -> None:
+    for row in rows:
+        if row.get("recording_reconnects") is None:
+            raise ValueError("dataset_missing_recording_quality")
+        try:
+            reconnects = int(row["recording_reconnects"])
+        except (TypeError, ValueError) as exc:
+            raise ValueError("dataset_invalid_recording_quality") from exc
+        if reconnects != 0:
+            raise ValueError("dataset_contains_reconnected_recording")
+
+
 def select_market_decision_rows(
     rows: Iterable[dict[str, Any]],
     *,
@@ -175,8 +187,10 @@ def fit_logistic_baseline(
     if float(regularization_c) <= 0:
         raise ValueError("regularization_c must be positive")
 
+    input_rows = [dict(row) for row in rows]
+    _validate_recording_quality_rows(input_rows)
     decision_rows = select_market_decision_rows(
-        rows,
+        input_rows,
         target_seconds_left=target_seconds_left,
         seconds_left_min=seconds_left_min,
         seconds_left_max=seconds_left_max,
@@ -247,6 +261,7 @@ def fit_logistic_baseline(
         "feature_columns": list(columns),
         "decision_target_seconds_left": float(target_seconds_left),
         "decision_window_seconds_left": [float(seconds_left_min), float(seconds_left_max)],
+        "recording_quality": "reconnects_required_zero",
         "markets_selected": len(decision_rows),
         "markets_eligible": len(clean_rows),
         "markets_dropped_missing_features": dropped,
@@ -276,10 +291,7 @@ def fit_logistic_baseline(
 
 def load_dataset_rows(path: str | Path) -> list[dict[str, Any]]:
     rows = pq.read_table(path).to_pylist()
-    if any(row.get("recording_reconnects") is None for row in rows):
-        raise ValueError("dataset_missing_recording_quality")
-    if any(int(row["recording_reconnects"]) != 0 for row in rows):
-        raise ValueError("dataset_contains_reconnected_recording")
+    _validate_recording_quality_rows(rows)
     return rows
 
 
