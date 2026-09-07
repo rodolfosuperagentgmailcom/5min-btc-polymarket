@@ -8,9 +8,9 @@ class BuyFeeEconomics:
     price: float
     fee_rate: float
     fees_enabled: bool
-    gross_shares: float
+    shares: float
     fee_usdc: float
-    net_shares: float
+    cash_cost_usdc: float
     breakeven_probability: float
 
 
@@ -36,7 +36,12 @@ def taker_fee_usdc(
     fees_enabled: bool = True,
     round_to_5_decimals: bool = False,
 ) -> float:
-    """Polymarket taker fee in USDC: C * feeRate * p * (1-p)."""
+    """CLOB V2 taker fee in USDC: C * feeRate * p * (1-p).
+
+    Since the April 28, 2026 CLOB V2 upgrade, fees are charged in USDC at
+    match time. Research keeps the continuous value unless venue-style
+    five-decimal rounding is explicitly requested.
+    """
 
     quantity = float(shares)
     if quantity < 0:
@@ -49,51 +54,26 @@ def taker_fee_usdc(
     return round(fee, 5) if round_to_5_decimals else fee
 
 
-def net_shares_after_taker_buy(
-    gross_shares: float,
-    price: float,
-    fee_rate: float,
-    *,
-    fees_enabled: bool = True,
-) -> float:
-    """Net outcome shares received after a taker BUY.
-
-    Polymarket collects a taker-buy fee in shares. Using the documented USDC
-    fee formula, fee_shares = fee_usdc / price.
-    """
-
-    quantity = float(gross_shares)
-    if quantity < 0:
-        raise ValueError("gross_shares must be non-negative")
-    p = _validate_price(price)
-    fee = taker_fee_usdc(quantity, p, fee_rate, fees_enabled=fees_enabled)
-    return quantity - fee / p
-
-
 def hold_to_resolution_breakeven_probability(
     price: float,
     fee_rate: float,
     *,
     fees_enabled: bool = True,
 ) -> float:
-    """Exact continuous breakeven q for a taker buy held to binary settlement.
+    """Breakeven q for one taker-bought share held to binary settlement.
 
-    For one gross share purchased at price p, cash cost is p. A taker fee on a
-    buy reduces received shares to 1 - feeRate*(1-p). Expected settlement value
-    is q times those net shares. Solve q * net_shares = p.
+    CLOB V2 charges the fee in USDC, so one share costs p plus its USDC fee.
+    A winning share still settles to $1; therefore q_break_even equals the
+    all-in USDC cost per share.
     """
 
     p = _validate_price(price)
     rate = _validate_fee_rate(fee_rate)
-    if not fees_enabled or rate == 0:
-        return p
-    net_share_factor = 1.0 - rate * (1.0 - p)
-    if net_share_factor <= 0:
-        raise ValueError("fee rate produces non-positive net shares")
-    return p / net_share_factor
+    fee = taker_fee_usdc(1.0, p, rate, fees_enabled=fees_enabled)
+    return p + fee
 
 
-def expected_hold_pnl_per_gross_share(
+def expected_hold_pnl_per_share(
     model_probability: float,
     price: float,
     fee_rate: float,
@@ -103,10 +83,11 @@ def expected_hold_pnl_per_gross_share(
     q = float(model_probability)
     if not 0 <= q <= 1:
         raise ValueError("model_probability must be between 0 and 1")
-    p = _validate_price(price)
-    rate = _validate_fee_rate(fee_rate)
-    net_shares = net_shares_after_taker_buy(1.0, p, rate, fees_enabled=fees_enabled)
-    return q * net_shares - p
+    return q - hold_to_resolution_breakeven_probability(
+        price,
+        fee_rate,
+        fees_enabled=fees_enabled,
+    )
 
 
 def probability_edge_after_entry_fee(
@@ -116,7 +97,8 @@ def probability_edge_after_entry_fee(
     *,
     fees_enabled: bool = True,
 ) -> float:
-    return float(model_probability) - hold_to_resolution_breakeven_probability(
+    return expected_hold_pnl_per_share(
+        model_probability,
         price,
         fee_rate,
         fees_enabled=fees_enabled,
@@ -124,7 +106,7 @@ def probability_edge_after_entry_fee(
 
 
 def buy_fee_economics(
-    gross_shares: float,
+    shares: float,
     price: float,
     fee_rate: float,
     *,
@@ -132,16 +114,18 @@ def buy_fee_economics(
 ) -> BuyFeeEconomics:
     p = _validate_price(price)
     rate = _validate_fee_rate(fee_rate)
-    quantity = float(gross_shares)
+    quantity = float(shares)
+    if quantity < 0:
+        raise ValueError("shares must be non-negative")
     fee = taker_fee_usdc(quantity, p, rate, fees_enabled=fees_enabled)
-    net = net_shares_after_taker_buy(quantity, p, rate, fees_enabled=fees_enabled)
+    cash_cost = quantity * p + fee
     return BuyFeeEconomics(
         price=p,
         fee_rate=rate,
         fees_enabled=fees_enabled,
-        gross_shares=quantity,
+        shares=quantity,
         fee_usdc=fee,
-        net_shares=net,
+        cash_cost_usdc=cash_cost,
         breakeven_probability=hold_to_resolution_breakeven_probability(
             p,
             rate,
