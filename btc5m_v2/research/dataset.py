@@ -10,6 +10,7 @@ import pyarrow.parquet as pq
 
 from btc5m_v2.research.btc_features import BTCSample, btc_features_at
 from btc5m_v2.research.features import build_feature_row, feature_payload
+from btc5m_v2.research.quality import read_recording_reconnects
 from btc5m_v2.research.replay import iter_snapshot_rows, read_btc_samples_parquet, read_resolution
 
 DEFAULT_LAGS_SECONDS = (5, 15, 30, 60)
@@ -119,21 +120,6 @@ def _normalize_source(value: Any) -> str:
     return str(value or "").strip().rstrip("/")
 
 
-def _recording_reconnects(market_dir: str | Path) -> int:
-    metadata_path = Path(market_dir) / "metadata.json"
-    if not metadata_path.exists():
-        raise ValueError("missing_market_metadata")
-    payload = json.loads(metadata_path.read_text(encoding="utf-8"))
-    raw = payload.get("reconnects", 0)
-    try:
-        reconnects = int(raw)
-    except (TypeError, ValueError) as exc:
-        raise ValueError("invalid_recording_reconnects") from exc
-    if reconnects < 0:
-        raise ValueError("invalid_recording_reconnects")
-    return reconnects
-
-
 def _verified_btc_inputs(market_dir: str | Path) -> tuple[list[BTCSample], float | None]:
     root = Path(market_dir)
     sample_path = root / "btc_samples.parquet"
@@ -218,7 +204,7 @@ def build_market_dataset_rows(
     sample_interval_ms: int = 1000,
     lag_seconds: tuple[int, ...] = DEFAULT_LAGS_SECONDS,
 ) -> list[dict[str, Any]]:
-    reconnects = _recording_reconnects(market_dir)
+    reconnects = read_recording_reconnects(market_dir, require_field=True)
     if reconnects != 0:
         raise ValueError(f"recording_reconnected:{reconnects}")
 
