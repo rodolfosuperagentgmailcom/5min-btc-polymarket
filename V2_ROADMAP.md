@@ -24,13 +24,15 @@ The V2 signal should not buy simply because one side is already expensive. It sh
 ## Milestone 2 — DATA (P0)
 
 - [x] Polymarket public market WebSocket feed.
-- [ ] Settlement-aligned BTC source adapter.
+- [x] Add Chainlink Data Streams discovery/authentication adapter primitives without hard-pinning an unverified feed ID.
+- [ ] Ingest the verified settlement-aligned BTC/USD 60-second TWAP report stream. The public discovery catalog currently exposes a BTC/USD CEX-price stream, not the settlement TWAP feed.
 - [x] Record exchange timestamps and local receive timestamps for CLOB events.
 - [x] Record UP/DOWN bid, ask, spread, and top-3 depth.
-- [ ] Record BTC reference, current value, delta, 15s/30s/60s momentum, and realized volatility.
+- [ ] Record BTC reference, current value, delta, 15s/30s/60s momentum, and realized volatility from the verified settlement-aligned feed.
 - [x] Store raw WebSocket events in append-only JSONL and normalized snapshots in fixed-schema Zstd Parquet parts.
-- [ ] Attach final market resolution to each 5-minute event.
+- [x] Attach final market resolution to each 5-minute event when observed through the Polymarket market WebSocket, with post-close Gamma enrichment available for unresolved recordings.
 - [x] Add live public WebSocket and end-to-end recorder smoke workflows with no credentials or order path.
+- [x] Add a public Chainlink discovery smoke workflow that fails safely without substituting a non-TWAP BTC feed.
 
 ## Milestone 3 — EDGE (P1)
 
@@ -54,9 +56,12 @@ The V2 signal should not buy simply because one side is already expensive. It sh
 ## Verification record
 
 - Safety CI: passing.
+- Research CI: passing.
 - Public Gamma/CLOB safety smoke: passing.
 - Public CLOB WebSocket smoke: passing; observed exchange-to-receive age around 48 ms in the 2026-09-06 smoke run.
 - End-to-end recorder smoke: passing; a 12-second public-data run recorded 2,718 raw events and 2,598 normalized snapshots and successfully reopened the generated Parquet.
+- Chainlink public discovery smoke on 2026-09-06: passing. It discovered one live BTC/USD stream, `BTC/USD-Streams-CexPrice` (`0x00039d9e45394f473ab1f050a1b963e6b05351e52d71e507509ada0c95ed75b8`), and zero 60-second TWAP candidates. That CEX-price feed is intentionally not used as the settlement feed.
+- The exact Polymarket BTC 5-minute resolution source observed in the live market matched `https://data.chain.link/streams/btc-usd-twap-60s-streams`.
 - No wallet credentials were loaded and no order path was used by V2 smoke/recorder workflows.
 
 ## Live execution policy
