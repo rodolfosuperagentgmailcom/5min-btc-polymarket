@@ -166,3 +166,24 @@ jobs:
             runtime/research/**
           if-no-files-found: warn
           retention-days: 30
+
+      - name: Require at least one fully V2-ready market
+        if: always()
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path("runtime/research/readiness.json")
+          if not path.exists():
+              raise SystemExit("readiness report missing")
+          report = json.loads(path.read_text(encoding="utf-8"))
+          ready = int(report.get("v2_ready_markets") or 0)
+          if ready < 1:
+              raise SystemExit(
+                  "capture artifact uploaded, but no market is fully V2-ready; "
+                  "use the delayed reconciliation workflow after settlement finalizes"
+              )
+          print(f"v2_ready_markets={ready}")
+          PY
