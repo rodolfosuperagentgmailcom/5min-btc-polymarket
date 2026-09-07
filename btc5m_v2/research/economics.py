@@ -13,26 +13,56 @@ class FillEstimate:
     worst_price: float | None
 
 
-def fee_per_share(price: float, fee_rate: float, enabled: bool) -> float:
+def fee_per_share(
+    price: float,
+    fee_rate: float,
+    enabled: bool,
+    fee_exponent: float = 1.0,
+) -> float:
     if not enabled:
         return 0.0
     p = float(price)
     if p < 0 or p > 1:
         raise ValueError("binary contract price must be between 0 and 1")
-    if fee_rate < 0:
+    rate = float(fee_rate)
+    exponent = float(fee_exponent)
+    if rate < 0:
         raise ValueError("fee_rate must be non-negative")
-    return float(fee_rate) * p * (1.0 - p)
+    if exponent < 0:
+        raise ValueError("fee_exponent must be non-negative")
+    return rate * (p * (1.0 - p)) ** exponent
 
 
-def breakeven_probability(entry_price: float, fee_rate: float, enabled: bool) -> float:
-    return float(entry_price) + fee_per_share(entry_price, fee_rate, enabled)
+def breakeven_probability(
+    entry_price: float,
+    fee_rate: float,
+    enabled: bool,
+    fee_exponent: float = 1.0,
+) -> float:
+    return float(entry_price) + fee_per_share(
+        entry_price,
+        fee_rate,
+        enabled,
+        fee_exponent,
+    )
 
 
-def expected_value_per_share(model_probability: float, entry_price: float, fee_rate: float, enabled: bool) -> float:
+def expected_value_per_share(
+    model_probability: float,
+    entry_price: float,
+    fee_rate: float,
+    enabled: bool,
+    fee_exponent: float = 1.0,
+) -> float:
     q = float(model_probability)
     if q < 0 or q > 1:
         raise ValueError("model_probability must be between 0 and 1")
-    return q - breakeven_probability(entry_price, fee_rate, enabled)
+    return q - breakeven_probability(
+        entry_price,
+        fee_rate,
+        enabled,
+        fee_exponent,
+    )
 
 
 def executable_buy_fill(asks: Iterable[tuple[float, float]], notional_usd: float) -> FillEstimate:
