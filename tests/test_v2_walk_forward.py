@@ -12,6 +12,7 @@ def _rows(count: int = 12) -> list[dict]:
                 "slug": f"btc-updown-5m-{index}",
                 "received_ts_ns": (index + 1) * 1_000_000_000,
                 "seconds_left": 120.0,
+                "recording_reconnects": 0,
                 "signal_x": 1.0 if label else -1.0,
                 "up_market_probability": 0.75 if label else 0.25,
                 "label_up": label,
@@ -29,6 +30,7 @@ def test_expanding_walk_forward_uses_strict_chronological_blocks():
         step_markets=2,
     )
 
+    assert result["recording_quality"] == "reconnects_required_zero"
     assert result["fold_count"] == 3
     folds = result["folds"]
 
@@ -55,8 +57,6 @@ def test_future_market_mutation_cannot_change_first_fold():
     )
 
     mutated = _rows()
-    # Fold 1 trains on markets 0..5 and tests on 6..7. Market 11 is future
-    # information relative to that fold and must not affect its metrics.
     mutated[11]["signal_x"] = 9999.0
     mutated[11]["label_up"] = 1 - int(mutated[11]["label_up"])
 
@@ -93,3 +93,19 @@ def test_duplicate_snapshots_still_select_one_market_decision_row():
 
     assert result["markets_selected"] == 12
     assert result["markets_eligible"] == 12
+
+
+def test_walk_forward_rejects_reconnected_rows():
+    rows = _rows()
+    rows[4]["recording_reconnects"] = 1
+    try:
+        expanding_walk_forward(
+            rows,
+            feature_columns=("signal_x",),
+            minimum_train_markets=6,
+            test_block_markets=2,
+        )
+    except ValueError as exc:
+        assert "dataset_contains_reconnected_recording" in str(exc)
+    else:
+        raise AssertionError("walk-forward must reject reconnected recordings")
