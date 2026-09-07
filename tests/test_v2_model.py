@@ -47,6 +47,24 @@ def test_label_columns_are_forbidden_as_model_features():
         raise AssertionError("label feature must be rejected")
 
 
+def test_model_object_itself_rejects_label_feature_even_if_json_is_hand_edited():
+    payload = {
+        "model_type": "standardized_logistic_regression",
+        "model_version": "bad-model",
+        "feature_columns": ["label_up"],
+        "means": [0.5],
+        "scales": [0.5],
+        "coefficients": [10.0],
+        "intercept": 0.0,
+    }
+    try:
+        LogisticProbabilityModel.from_payload(payload)
+    except ValueError as exc:
+        assert "label leakage" in str(exc)
+    else:
+        raise AssertionError("loaded model must reject terminal-label predictors")
+
+
 def test_decision_selection_uses_one_snapshot_per_market_nearest_target():
     rows = [
         _row(0, seconds_left=145.0, offset_ns=0),
