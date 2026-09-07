@@ -41,6 +41,20 @@ def _f(value: Any) -> float | None:
         return None
 
 
+def _optional_bool(value: Any) -> bool | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"true", "1", "yes"}:
+            return True
+        if lowered in {"false", "0", "no"}:
+            return False
+    return bool(value)
+
+
 def _minimum_model_probability(cfg: V2Config) -> float:
     return float(cfg.raw["signal"]["minimum_model_probability"])
 
@@ -68,8 +82,9 @@ def _evaluate_side(
     model_probability: float,
     cfg: V2Config,
     resolution_source: str | None,
-    fees_enabled: bool,
-    taker_fee_rate: float,
+    fees_enabled: bool | None,
+    taker_fee_rate: float | None,
+    fee_exponent: float | None,
     consecutive_data_errors: int,
 ) -> SideEvaluation:
     book = _book_for_side(row, side)
@@ -88,10 +103,21 @@ def _evaluate_side(
     if model_probability < _minimum_model_probability(cfg):
         reasons.append("model_probability_too_low")
 
+    if fees_enabled is None:
+        reasons.append("missing_fee_metadata")
+    elif fees_enabled and (taker_fee_rate is None or fee_exponent is None):
+        reasons.append("missing_fee_metadata")
+    elif taker_fee_rate is not None and taker_fee_rate < 0:
+        reasons.append("invalid_fee_rate")
+    elif fee_exponent is not None and fee_exponent < 0:
+        reasons.append("invalid_fee_exponent")
+
     if entry is None:
         reasons.append("missing_entry_price")
-    else:
-        breakeven = breakeven_probability(entry, taker_fee_rate, fees_enabled)
+    elif "missing_fee_metadata" not in reasons and "invalid_fee_rate" not in reasons and "invalid_fee_exponent" not in reasons:
+        rate = 0.0 if not fees_enabled else float(taker_fee_rate or 0.0)
+        exponent = 1.0 if not fees_enabled else float(fee_exponent or 0.0)
+        breakeven = breakeven_probability(entry, rate, bool(fees_enabled), exponent)
         edge = model_probability - breakeven
         if edge < _minimum_edge(cfg):
             reasons.append("edge_too_small")
@@ -113,25 +139,31 @@ def decide_snapshot(
     q_up: float,
     cfg: V2Config,
     resolution_source: str | None = None,
-    fees_enabled: bool = True,
-    taker_fee_rate: float = 0.07,
+    fees_enabled: bool | None = None,
+    taker_fee_rate: float | None = None,
+    fee_exponent: float | None = None,
     consecutive_data_errors: int = 0,
 ) -> SignalDecision:
-    """Pure side-by-side V2 decision using only data available at this snapshot.
+    """Pure V2 decision using only data available at this snapshot.
 
-    q_up is injected by the model/research layer. This function does not invent
-    predictive coefficients. It applies market-quality, freshness, settlement-source,
-    probability and fee-adjusted edge gates symmetrically to UP and DOWN.
+    ``q_up`` is injected by the model/research layer. Fee inputs must come from
+    the market's CLOB V2 fee schedule (or explicit test inputs); missing fee
+    metadata blocks trading rather than silently assuming a category rate.
     """
+
     q = float(q_up)
     if q < 0 or q > 1:
         raise ValueError("q_up must be between 0 and 1")
-    if taker_fee_rate < 0:
-        raise ValueError("taker_fee_rate must be non-negative")
 
     source = resolution_source
     if source is None:
         source = str(row.get("resolution_source") or "") or None
+
+    enabled = fees_enabled
+    if enabled is None:
+        enabled = _optional_bool(row.get("fees_enabled"))
+    rate = taker_fee_rate if taker_fee_rate is not None else _f(row.get("fee_rate"))
+    exponent = fee_exponent if fee_exponent is not None else _f(row.get("fee_exponent"))
 
     up = _evaluate_side(
         row,
@@ -139,8 +171,9 @@ def decide_snapshot(
         model_probability=q,
         cfg=cfg,
         resolution_source=source,
-        fees_enabled=fees_enabled,
-        taker_fee_rate=taker_fee_rate,
+        fees_enabled=enabled,
+        taker_fee_rate=rate,
+        fee_exponent=exponent,
         consecutive_data_errors=consecutive_data_errors,
     )
     down = _evaluate_side(
@@ -149,8 +182,9 @@ def decide_snapshot(
         model_probability=1.0 - q,
         cfg=cfg,
         resolution_source=source,
-        fees_enabled=fees_enabled,
-        taker_fee_rate=taker_fee_rate,
+        fees_enabled=enabled,
+        taker_fee_rate=rate,
+        fee_exponent=exponent,
         consecutive_data_errors=consecutive_data_errors,
     )
 
