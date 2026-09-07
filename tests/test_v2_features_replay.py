@@ -5,8 +5,13 @@ import json
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from btc5m_v2.research.btc_features import BTCSample, btc_features_at
 from btc5m_v2.research.features import build_feature_row, depth_imbalance, midpoint
-from btc5m_v2.research.replay import iter_replay_rows
+from btc5m_v2.research.replay import (
+    build_feature_dataset_rows,
+    iter_replay_rows,
+    write_feature_dataset,
+)
 
 
 def sample_row(**overrides):
@@ -84,3 +89,76 @@ def test_unresolved_market_has_no_training_label(tmp_path):
     assert replay[0].resolved is False
     assert replay[0].label_up is None
     assert replay[0].selected_won is None
+
+
+def test_btc_features_never_read_future_samples():
+    base = 1_800_000_000_000_000_000
+    samples = [
+        BTCSample(base, 100.0),
+        BTCSample(base + 15_000_000_000, 110.0),
+        BTCSample(base + 30_000_000_000, 120.0),
+        BTCSample(base + 45_000_000_000, 999.0),
+    ]
+
+    features = btc_features_at(
+        samples,
+        now_ns=base + 30_000_000_000,
+        reference_price=90.0,
+    )
+    assert features["btc_price"] == 120.0
+    assert features["btc_move_15s"] == 10.0
+    assert features["btc_move_30s"] == 20.0
+    assert features["btc_move_from_reference"] == 30.0
+    assert features["btc_impulse_z"] is not None
+    assert features["btc_impulse_z"] > 0
+
+
+def test_feature_dataset_joins_btc_causally_then_attaches_terminal_label(tmp_path):
+    base = 1_800_000_000_000_000_000
+    market_dir = tmp_path / "2026-09-06" / "btc-updown-5m-test"
+    market_dir.mkdir(parents=True)
+
+    rows = [
+        sample_row(received_ts_ns=base, seconds_left=150, up_bid=0.54, up_ask=0.55, down_bid=0.45, down_ask=0.46),
+        sample_row(received_ts_ns=base + 15_000_000_000, seconds_left=135, up_bid=0.59, up_ask=0.60, down_bid=0.40, down_ask=0.41),
+        sample_row(received_ts_ns=base + 30_000_000_000, seconds_left=120, up_bid=0.64, up_ask=0.65, down_bid=0.35, down_ask=0.36),
+    ]
+    pq.write_table(pa.Table.from_pylist(rows), market_dir / "clob_snapshots_part-000000.parquet")
+    (market_dir / "resolution.json").write_text(
+        json.dumps({"resolved": True, "winning_side": "UP"}),
+        encoding="utf-8",
+    )
+
+    btc_samples = [
+        BTCSample(base, 100_000.0),
+        BTCSample(base + 15_000_000_000, 100_050.0),
+        BTCSample(base + 30_000_000_000, 100_120.0),
+        BTCSample(base + 45_000_000_000, 120_000.0),
+    ]
+
+    dataset = build_feature_dataset_rows(
+        market_dir,
+        seconds_left_min=90,
+        seconds_left_max=150,
+        btc_samples=btc_samples,
+        btc_reference_price=100_000.0,
+    )
+
+    assert len(dataset) == 3
+    assert dataset[-1]["btc_price"] == 100_120.0
+    assert dataset[-1]["btc_move_15s"] == 70.0
+    assert dataset[-1]["btc_move_30s"] == 120.0
+    assert dataset[-1]["up_mid_delta_15s"] is not None
+    assert dataset[-1]["target_up"] == 1
+    assert dataset[-1]["winning_side"] == "UP"
+    assert dataset[-1]["selected_side_by_mid_won"] is True
+
+    output = write_feature_dataset(
+        market_dir,
+        btc_samples=btc_samples,
+        btc_reference_price=100_000.0,
+    )
+    table = pq.read_table(output)
+    assert table.num_rows == 3
+    assert "btc_impulse_z" in table.column_names
+    assert "target_up" in table.column_names
