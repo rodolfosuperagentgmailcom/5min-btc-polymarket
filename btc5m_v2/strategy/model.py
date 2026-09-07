@@ -6,6 +6,25 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+FORBIDDEN_LABEL_FEATURES = frozenset(
+    {
+        "resolved",
+        "winning_side",
+        "label_up",
+        "target_up",
+        "selected_won",
+        "selected_side_by_mid_won",
+    }
+)
+
+
+def ensure_no_label_features(feature_columns: Sequence[str]) -> tuple[str, ...]:
+    columns = tuple(str(value) for value in feature_columns)
+    overlap = sorted(set(columns) & FORBIDDEN_LABEL_FEATURES)
+    if overlap:
+        raise ValueError(f"label leakage features are forbidden: {', '.join(overlap)}")
+    return columns
+
 
 @dataclass(frozen=True)
 class LogisticProbabilityModel:
@@ -17,6 +36,9 @@ class LogisticProbabilityModel:
     model_version: str = "btc5m-logit-v1"
 
     def __post_init__(self) -> None:
+        columns = ensure_no_label_features(self.feature_columns)
+        if columns != self.feature_columns:
+            object.__setattr__(self, "feature_columns", columns)
         length = len(self.feature_columns)
         if not length:
             raise ValueError("model requires at least one feature")
@@ -24,6 +46,12 @@ class LogisticProbabilityModel:
             raise ValueError("feature_columns, means, scales, and coefficients must have equal length")
         if any(scale <= 0 or not math.isfinite(scale) for scale in self.scales):
             raise ValueError("all feature scales must be positive finite values")
+        if any(not math.isfinite(value) for value in self.means):
+            raise ValueError("all feature means must be finite")
+        if any(not math.isfinite(value) for value in self.coefficients):
+            raise ValueError("all model coefficients must be finite")
+        if not math.isfinite(float(self.intercept)):
+            raise ValueError("model intercept must be finite")
 
     @staticmethod
     def _sigmoid(value: float) -> float:
@@ -104,19 +132,3 @@ class LogisticProbabilityModel:
         if not isinstance(payload, dict):
             raise ValueError("model JSON must contain an object")
         return cls.from_payload(payload)
-
-
-def ensure_no_label_features(feature_columns: Sequence[str]) -> tuple[str, ...]:
-    columns = tuple(str(value) for value in feature_columns)
-    forbidden = {
-        "resolved",
-        "winning_side",
-        "label_up",
-        "target_up",
-        "selected_won",
-        "selected_side_by_mid_won",
-    }
-    overlap = sorted(set(columns) & forbidden)
-    if overlap:
-        raise ValueError(f"label leakage features are forbidden: {', '.join(overlap)}")
-    return columns
