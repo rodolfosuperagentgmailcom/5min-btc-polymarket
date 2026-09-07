@@ -228,7 +228,6 @@ def fit_logistic_baseline(
         intercept=float(estimator.intercept_[0]),
     )
 
-    # Ensure exported lightweight inference reproduces sklearn probabilities.
     exported_probabilities = np.asarray(
         [float(model.predict_up(row)) for row in test_rows],
         dtype=float,
@@ -276,7 +275,12 @@ def fit_logistic_baseline(
 
 
 def load_dataset_rows(path: str | Path) -> list[dict[str, Any]]:
-    return pq.read_table(path).to_pylist()
+    rows = pq.read_table(path).to_pylist()
+    if any(row.get("recording_reconnects") is None for row in rows):
+        raise ValueError("dataset_missing_recording_quality")
+    if any(int(row["recording_reconnects"]) != 0 for row in rows):
+        raise ValueError("dataset_contains_reconnected_recording")
+    return rows
 
 
 def train_from_parquet(
