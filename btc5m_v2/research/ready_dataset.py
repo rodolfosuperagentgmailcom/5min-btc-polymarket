@@ -30,9 +30,12 @@ def write_ready_dataset(
     if not selected:
         raise ValueError("no_v2_ready_markets")
 
+    destination = Path(output_path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+
     summary = write_dataset(
         selected,
-        output_path,
+        destination,
         sample_interval_ms=sample_interval_ms,
     )
     summary.update(
@@ -45,8 +48,8 @@ def write_ready_dataset(
         }
     )
 
-    destination = Path(output_path)
-    destination.with_suffix(destination.suffix + ".json").write_text(
+    summary_path = destination.with_suffix(destination.suffix + ".json")
+    summary_path.write_text(
         json.dumps(summary, indent=2),
         encoding="utf-8",
     )
