@@ -12,8 +12,8 @@ from btc5m_v2.research.fees import (
 def test_crypto_fee_formula_at_fifty_cents() -> None:
     # Current published crypto category rate is 0.07; 100 shares at $0.50
     # produces 100 * .07 * .5 * .5 = 1.75 USDC before rounding.
-    assert taker_fee_usdc(100, 0.50, 0.07) == 1.75
-    assert net_shares_after_taker_buy(100, 0.50, 0.07) == 96.5
+    assert round(taker_fee_usdc(100, 0.50, 0.07), 8) == 1.75
+    assert round(net_shares_after_taker_buy(100, 0.50, 0.07), 8) == 96.5
 
 
 def test_breakeven_accounts_for_buy_fee_being_deducted_in_shares() -> None:
