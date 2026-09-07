@@ -24,7 +24,7 @@ jobs:
       contents: read
       actions: read
     env:
-      SOURCE_RUN_ID: ${{ inputs.source_run_id || '34141279586' }}
+      SOURCE_RUN_ID: ${{ inputs.source_run_id || '34159998459' }}
       LEGACY_THRESHOLD: ${{ inputs.legacy_threshold || '0.70' }}
 
     steps:
