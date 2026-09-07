@@ -6,12 +6,13 @@ from typing import Any
 from btc5m_v2.config import V2Config
 from btc5m_v2.research.economics import breakeven_probability
 from btc5m_v2.safety import BookMetrics, evaluate_market_gate
+from btc5m_v2.strategy.model import LogisticProbabilityModel
 
 
 @dataclass(frozen=True)
 class SideEvaluation:
     side: str
-    model_probability: float
+    model_probability: float | None
     entry_price: float | None
     breakeven_probability: float | None
     edge: float | None
@@ -188,12 +189,21 @@ def decide_snapshot(
         consecutive_data_errors=consecutive_data_errors,
     )
 
-    candidates = [evaluation for evaluation in (up, down) if evaluation.gate_ok and evaluation.edge is not None]
+    candidates = [
+        evaluation
+        for evaluation in (up, down)
+        if evaluation.gate_ok and evaluation.edge is not None
+    ]
     if not candidates:
         reasons = tuple(dict.fromkeys(up.reasons + down.reasons))
         return SignalDecision(False, None, None, None, None, None, reasons, up, down)
 
-    selected = max(candidates, key=lambda evaluation: float(evaluation.edge or float("-inf")))
+    selected = max(
+        candidates,
+        key=lambda evaluation: float(
+            evaluation.edge if evaluation.edge is not None else float("-inf")
+        ),
+    )
     return SignalDecision(
         True,
         selected.side,
@@ -204,4 +214,86 @@ def decide_snapshot(
         (),
         up,
         down,
+    )
+
+
+def _missing_model_decision(
+    row: dict[str, Any],
+    *,
+    missing_features: tuple[str, ...],
+) -> SignalDecision:
+    reasons = ("missing_model_features",) + tuple(
+        f"missing_model_feature:{name}" for name in missing_features
+    )
+    up_book = _book_for_side(row, "UP")
+    down_book = _book_for_side(row, "DOWN")
+    up = SideEvaluation(
+        side="UP",
+        model_probability=None,
+        entry_price=up_book.best_ask,
+        breakeven_probability=None,
+        edge=None,
+        gate_ok=False,
+        reasons=reasons,
+    )
+    down = SideEvaluation(
+        side="DOWN",
+        model_probability=None,
+        entry_price=down_book.best_ask,
+        breakeven_probability=None,
+        edge=None,
+        gate_ok=False,
+        reasons=reasons,
+    )
+    return SignalDecision(
+        trade=False,
+        side=None,
+        model_probability=None,
+        entry_price=None,
+        breakeven_probability=None,
+        edge=None,
+        reasons=reasons,
+        up=up,
+        down=down,
+    )
+
+
+def decide_snapshot_with_model(
+    row: dict[str, Any],
+    *,
+    model: LogisticProbabilityModel,
+    cfg: V2Config,
+    resolution_source: str | None = None,
+    fees_enabled: bool | None = None,
+    taker_fee_rate: float | None = None,
+    fee_exponent: float | None = None,
+    consecutive_data_errors: int = 0,
+) -> SignalDecision:
+    """Run a trained model through the same pure fee/safety decision gate.
+
+    This adapter has no execution side effects. Missing/non-finite model inputs
+    fail closed as ``NO_TRADE`` rather than falling back to market probability,
+    a legacy threshold, or an alternate BTC feed.
+    """
+
+    missing = model.missing_features(row)
+    if missing:
+        return _missing_model_decision(row, missing_features=missing)
+
+    q_up = model.predict_up(row)
+    if q_up is None:
+        return _missing_model_decision(
+            row,
+            missing_features=("model_probability_unavailable",),
+        )
+
+    return decide_snapshot(
+        row,
+        q_up=q_up,
+        cfg=cfg,
+        resolution_source=resolution_source,
+        fees_enabled=fees_enabled,
+        taker_fee_rate=taker_fee_rate,
+        fee_exponent=fee_exponent,
+        consecutive_data_errors=consecutive_data_errors,
     )
