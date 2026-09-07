@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 
 def read_recording_reconnects(market_dir: str | Path, *, require_field: bool = True) -> int:
@@ -31,3 +31,17 @@ def require_contiguous_recording(market_dir: str | Path) -> None:
     reconnects = read_recording_reconnects(market_dir, require_field=True)
     if reconnects != 0:
         raise ValueError(f"recording_reconnected:{reconnects}")
+
+
+def validate_recording_quality_rows(rows: Sequence[dict[str, Any]]) -> None:
+    """Fail closed unless every research row proves uninterrupted CLOB recording."""
+
+    for row in rows:
+        if row.get("recording_reconnects") is None:
+            raise ValueError("dataset_missing_recording_quality")
+        try:
+            reconnects = int(row["recording_reconnects"])
+        except (TypeError, ValueError) as exc:
+            raise ValueError("dataset_invalid_recording_quality") from exc
+        if reconnects != 0:
+            raise ValueError("dataset_contains_reconnected_recording")
