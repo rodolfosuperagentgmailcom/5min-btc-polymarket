@@ -10,6 +10,9 @@ import pyarrow.parquet as pq
 from btc5m_v2.research.fee_enrich import read_fee_schedule
 from btc5m_v2.research.replay import read_resolution
 
+DECISION_SECONDS_LEFT_MIN = 90.0
+DECISION_SECONDS_LEFT_MAX = 150.0
+
 
 def _json_object(path: Path) -> dict[str, Any] | None:
     if not path.exists():
@@ -35,6 +38,31 @@ def _parquet_rows(paths: Iterable[Path]) -> int | None:
     except Exception:
         return None
     return total if seen else 0
+
+
+def _decision_window_snapshot_present(paths: Iterable[Path]) -> bool | None:
+    """Return whether recorded CLOB snapshots cover the model decision window.
+
+    Readiness should reflect the actual training contract: one causal decision
+    snapshot is selected between 90 and 150 seconds left, targeting 120. A
+    partial recording that never reaches this window is valid raw evidence but
+    must not be advertised as V2-training-ready.
+    """
+
+    seen = False
+    try:
+        for path in paths:
+            seen = True
+            table = pq.read_table(path, columns=["seconds_left"])
+            for value in table.column("seconds_left").to_pylist():
+                if value is None:
+                    continue
+                seconds_left = float(value)
+                if DECISION_SECONDS_LEFT_MIN <= seconds_left <= DECISION_SECONDS_LEFT_MAX:
+                    return True
+    except Exception:
+        return None
+    return False if seen else False
 
 
 def _int_field(payload: dict[str, Any] | None, name: str) -> int | None:
@@ -75,6 +103,12 @@ def assess_market_readiness(market_dir: str | Path) -> dict[str, Any]:
         reasons.append("invalid_clob_parquet")
     elif clob_snapshot_rows <= 0:
         reasons.append("missing_clob_snapshots")
+
+    decision_window_present = _decision_window_snapshot_present(snapshot_paths)
+    if decision_window_present is None:
+        reasons.append("invalid_clob_decision_window")
+    elif not decision_window_present:
+        reasons.append("missing_decision_window_snapshot")
 
     resolved, winning_side = read_resolution(directory)
     resolved = bool(resolved and winning_side in {"UP", "DOWN"})
@@ -123,6 +157,11 @@ def assess_market_readiness(market_dir: str | Path) -> dict[str, Any]:
         "clob_reconnects": clob_reconnects,
         "clob_snapshot_rows": clob_snapshot_rows,
         "clob_raw_present": raw_present,
+        "decision_window_snapshot_present": decision_window_present,
+        "decision_window_seconds_left": [
+            DECISION_SECONDS_LEFT_MIN,
+            DECISION_SECONDS_LEFT_MAX,
+        ],
         "btc_reconnects": btc_reconnects,
         "btc_sample_rows": btc_rows,
         "btc_source": btc_source or None,
@@ -151,6 +190,9 @@ def readiness_report(output_root: str | Path) -> dict[str, Any]:
         "v2_ready_fraction": None if not markets else len(ready) / len(markets),
         "resolved_markets": sum(1 for market in markets if market["resolved"]),
         "clean_clob_markets": sum(1 for market in markets if market["clob_reconnects"] == 0),
+        "decision_window_markets": sum(
+            1 for market in markets if market["decision_window_snapshot_present"] is True
+        ),
         "clean_btc_markets": sum(1 for market in markets if market["btc_reconnects"] == 0),
         "verified_btc_reference_markets": sum(
             1 for market in markets if market["btc_reference_verified"]
