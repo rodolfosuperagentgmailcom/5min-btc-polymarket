@@ -14,26 +14,32 @@ def taker_fee_usd(
     price: float,
     fee_rate: float,
     fees_enabled: bool,
+    fee_exponent: float = 1.0,
     is_taker: bool = True,
 ) -> float:
-    """Continuous fee model from Polymarket's documented fee curve.
+    """Continuous CLOB V2 platform fee for one execution level.
 
-    Venue rounding can be applied at accounting/reconciliation time. Research uses
-    the unrounded value so tiny implementation rounding choices do not create fake edge.
+    CLOB V2 exposes a per-market fee schedule with rate ``r`` and exponent ``e``.
+    The official V2 client applies ``r * (p * (1-p)) ** e`` per share. Venue
+    rounding can be applied at accounting/reconciliation time; research keeps
+    the continuous value so rounding choices do not create synthetic edge.
     """
 
     qty = float(shares)
     px = float(price)
     rate = float(fee_rate)
+    exponent = float(fee_exponent)
     if qty < 0.0:
         raise ValueError("shares cannot be negative")
     if not 0.0 < px <= 1.0:
         raise ValueError("price must be in (0, 1]")
     if rate < 0.0:
         raise ValueError("fee_rate cannot be negative")
+    if exponent < 0.0:
+        raise ValueError("fee_exponent cannot be negative")
     if not fees_enabled or not is_taker or qty == 0.0 or rate == 0.0:
         return 0.0
-    return qty * rate * px * (1.0 - px)
+    return qty * rate * (px * (1.0 - px)) ** exponent
 
 
 def fee_for_fills(
@@ -41,6 +47,7 @@ def fee_for_fills(
     *,
     fee_rate: float,
     fees_enabled: bool,
+    fee_exponent: float = 1.0,
     is_taker: bool = True,
 ) -> float:
     return sum(
@@ -48,6 +55,7 @@ def fee_for_fills(
             shares=float(fill.shares),
             price=float(fill.price),
             fee_rate=fee_rate,
+            fee_exponent=fee_exponent,
             fees_enabled=fees_enabled,
             is_taker=is_taker,
         )
