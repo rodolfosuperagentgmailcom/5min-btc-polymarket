@@ -75,7 +75,12 @@ def _write_market(tmp_path: Path) -> Path:
     return market_dir
 
 
-def _write_verified_btc(market_dir: Path, *, source: str = EXPECTED_SOURCE) -> None:
+def _write_verified_btc(
+    market_dir: Path,
+    *,
+    source: str = EXPECTED_SOURCE,
+    reconnects: int = 0,
+) -> None:
     start = 1_900_000_000_000_000_000
     samples = [
         {"ts_ns": start - 60_000_000_000, "price": 99_800.0},
@@ -93,7 +98,8 @@ def _write_verified_btc(market_dir: Path, *, source: str = EXPECTED_SOURCE) -> N
             {
                 "source": source,
                 "reference_price": 100_000.0,
-                "verified": True,
+                "reference_verified": True,
+                "reconnects": reconnects,
             }
         ),
         encoding="utf-8",
@@ -152,6 +158,18 @@ def test_btc_source_mismatch_fails_closed(tmp_path):
         raise AssertionError("mismatched BTC source must fail closed")
 
 
+def test_btc_reconnect_fails_closed(tmp_path):
+    market_dir = _write_market(tmp_path)
+    _write_verified_btc(market_dir, reconnects=1)
+
+    try:
+        build_market_dataset_rows(market_dir, sample_interval_ms=1000)
+    except ValueError as exc:
+        assert "btc_recording_reconnected:1" in str(exc)
+    else:
+        raise AssertionError("BTC recording reconnect must fail closed")
+
+
 def test_dataset_write_roundtrip_and_summary(tmp_path):
     market_dir = _write_market(tmp_path)
     output = tmp_path / "features" / "btc5m_features.parquet"
@@ -161,7 +179,7 @@ def test_dataset_write_roundtrip_and_summary(tmp_path):
     assert summary["resolved_rows"] == 3
     assert summary["markets"] == 1
     assert summary["btc_features_populated"] is False
-    assert summary["recording_quality"] == "reconnects_required_zero"
+    assert summary["recording_quality"] == "clob_and_present_btc_reconnects_required_zero"
     assert output.exists()
 
     table = pq.read_table(output)
