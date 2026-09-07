@@ -66,19 +66,23 @@ def test_model_object_itself_rejects_label_feature_even_if_json_is_hand_edited()
         raise AssertionError("loaded model must reject terminal-label predictors")
 
 
-def test_decision_selection_uses_one_snapshot_per_market_nearest_target():
+def test_decision_selection_uses_first_snapshot_after_target_crossing():
     rows = [
         _row(0, seconds_left=145.0, offset_ns=0),
         _row(0, seconds_left=121.0, offset_ns=1_000_000_000),
-        _row(0, seconds_left=100.0, offset_ns=2_000_000_000),
+        _row(0, seconds_left=119.0, offset_ns=2_000_000_000),
+        _row(0, seconds_left=100.0, offset_ns=3_000_000_000),
         _row(1, seconds_left=119.0, offset_ns=0),
         _row(1, seconds_left=80.0, offset_ns=1_000_000_000),
+        _row(2, seconds_left=145.0, offset_ns=0),
+        _row(2, seconds_left=121.0, offset_ns=1_000_000_000),
     ]
     selected = select_market_decision_rows(rows, target_seconds_left=120.0)
     assert len(selected) == 2
     by_slug = {row["slug"]: row for row in selected}
-    assert by_slug["btc-updown-5m-0000"]["seconds_left"] == 121.0
+    assert by_slug["btc-updown-5m-0000"]["seconds_left"] == 119.0
     assert by_slug["btc-updown-5m-0001"]["seconds_left"] == 119.0
+    assert "btc-updown-5m-0002" not in by_slug
 
 
 def test_logistic_training_is_chronological_market_level_and_exportable(tmp_path):
@@ -91,6 +95,7 @@ def test_logistic_training_is_chronological_market_level_and_exportable(tmp_path
     )
 
     summary = result.summary
+    assert summary["decision_selection"] == "first_snapshot_after_target_crossing"
     assert summary["recording_quality"] == "reconnects_required_zero"
     assert summary["markets_selected"] == 24
     assert summary["markets_eligible"] == 24
