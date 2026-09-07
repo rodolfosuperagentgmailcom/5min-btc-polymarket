@@ -7,6 +7,7 @@ from dataclasses import dataclass
 class BuyFeeEconomics:
     price: float
     fee_rate: float
+    fee_exponent: float
     fees_enabled: bool
     shares: float
     fee_usdc: float
@@ -28,29 +29,33 @@ def _validate_fee_rate(fee_rate: float) -> float:
     return value
 
 
+def _validate_fee_exponent(fee_exponent: float) -> float:
+    value = float(fee_exponent)
+    if value < 0:
+        raise ValueError("fee_exponent must be non-negative")
+    return value
+
+
 def taker_fee_usdc(
     shares: float,
     price: float,
     fee_rate: float,
     *,
+    fee_exponent: float = 1.0,
     fees_enabled: bool = True,
     round_to_5_decimals: bool = False,
 ) -> float:
-    """CLOB V2 taker fee in USDC: C * feeRate * p * (1-p).
-
-    Since the April 28, 2026 CLOB V2 upgrade, fees are charged in USDC at
-    match time. Research keeps the continuous value unless venue-style
-    five-decimal rounding is explicitly requested.
-    """
+    """CLOB V2 taker fee in USDC using the market's rate and exponent."""
 
     quantity = float(shares)
     if quantity < 0:
         raise ValueError("shares must be non-negative")
     p = _validate_price(price)
     rate = _validate_fee_rate(fee_rate)
+    exponent = _validate_fee_exponent(fee_exponent)
     if not fees_enabled or quantity == 0 or rate == 0:
         return 0.0
-    fee = quantity * rate * p * (1.0 - p)
+    fee = quantity * rate * (p * (1.0 - p)) ** exponent
     return round(fee, 5) if round_to_5_decimals else fee
 
 
@@ -58,18 +63,21 @@ def hold_to_resolution_breakeven_probability(
     price: float,
     fee_rate: float,
     *,
+    fee_exponent: float = 1.0,
     fees_enabled: bool = True,
 ) -> float:
-    """Breakeven q for one taker-bought share held to binary settlement.
-
-    CLOB V2 charges the fee in USDC, so one share costs p plus its USDC fee.
-    A winning share still settles to $1; therefore q_break_even equals the
-    all-in USDC cost per share.
-    """
+    """Breakeven q for one taker-bought share held to binary settlement."""
 
     p = _validate_price(price)
     rate = _validate_fee_rate(fee_rate)
-    fee = taker_fee_usdc(1.0, p, rate, fees_enabled=fees_enabled)
+    exponent = _validate_fee_exponent(fee_exponent)
+    fee = taker_fee_usdc(
+        1.0,
+        p,
+        rate,
+        fee_exponent=exponent,
+        fees_enabled=fees_enabled,
+    )
     return p + fee
 
 
@@ -78,6 +86,7 @@ def expected_hold_pnl_per_share(
     price: float,
     fee_rate: float,
     *,
+    fee_exponent: float = 1.0,
     fees_enabled: bool = True,
 ) -> float:
     q = float(model_probability)
@@ -86,6 +95,7 @@ def expected_hold_pnl_per_share(
     return q - hold_to_resolution_breakeven_probability(
         price,
         fee_rate,
+        fee_exponent=fee_exponent,
         fees_enabled=fees_enabled,
     )
 
@@ -95,12 +105,14 @@ def probability_edge_after_entry_fee(
     price: float,
     fee_rate: float,
     *,
+    fee_exponent: float = 1.0,
     fees_enabled: bool = True,
 ) -> float:
     return expected_hold_pnl_per_share(
         model_probability,
         price,
         fee_rate,
+        fee_exponent=fee_exponent,
         fees_enabled=fees_enabled,
     )
 
@@ -110,18 +122,27 @@ def buy_fee_economics(
     price: float,
     fee_rate: float,
     *,
+    fee_exponent: float = 1.0,
     fees_enabled: bool = True,
 ) -> BuyFeeEconomics:
     p = _validate_price(price)
     rate = _validate_fee_rate(fee_rate)
+    exponent = _validate_fee_exponent(fee_exponent)
     quantity = float(shares)
     if quantity < 0:
         raise ValueError("shares must be non-negative")
-    fee = taker_fee_usdc(quantity, p, rate, fees_enabled=fees_enabled)
+    fee = taker_fee_usdc(
+        quantity,
+        p,
+        rate,
+        fee_exponent=exponent,
+        fees_enabled=fees_enabled,
+    )
     cash_cost = quantity * p + fee
     return BuyFeeEconomics(
         price=p,
         fee_rate=rate,
+        fee_exponent=exponent,
         fees_enabled=fees_enabled,
         shares=quantity,
         fee_usdc=fee,
@@ -129,6 +150,7 @@ def buy_fee_economics(
         breakeven_probability=hold_to_resolution_breakeven_probability(
             p,
             rate,
+            fee_exponent=exponent,
             fees_enabled=fees_enabled,
         ),
     )
