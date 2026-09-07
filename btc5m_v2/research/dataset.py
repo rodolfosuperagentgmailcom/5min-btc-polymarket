@@ -135,6 +135,19 @@ def _verified_btc_inputs(market_dir: str | Path) -> tuple[list[BTCSample], float
 
     btc_metadata = json.loads(btc_metadata_path.read_text(encoding="utf-8"))
     market_metadata = json.loads(market_metadata_path.read_text(encoding="utf-8"))
+    if not isinstance(btc_metadata, dict):
+        raise ValueError("invalid_btc_metadata")
+    if "reconnects" not in btc_metadata:
+        raise ValueError("btc_missing_recording_quality")
+    try:
+        btc_reconnects = int(btc_metadata["reconnects"])
+    except (TypeError, ValueError) as exc:
+        raise ValueError("btc_invalid_recording_reconnects") from exc
+    if btc_reconnects < 0:
+        raise ValueError("btc_invalid_recording_reconnects")
+    if btc_reconnects != 0:
+        raise ValueError(f"btc_recording_reconnected:{btc_reconnects}")
+
     expected_source = _normalize_source(market_metadata.get("resolution_source"))
     actual_source = _normalize_source(btc_metadata.get("source"))
     if not expected_source or not actual_source or actual_source != expected_source:
@@ -295,7 +308,7 @@ def write_dataset(
         "markets": len({row["slug"] for row in rows}),
         "sample_interval_ms": sample_interval_ms,
         "btc_features_populated": any(row.get("btc_current") is not None for row in rows),
-        "recording_quality": "reconnects_required_zero",
+        "recording_quality": "clob_and_present_btc_reconnects_required_zero",
     }
     destination.with_suffix(destination.suffix + ".json").write_text(
         json.dumps(summary, indent=2), encoding="utf-8"
