@@ -113,7 +113,7 @@ def test_dataset_write_roundtrip_and_summary(tmp_path):
     assert table.num_rows == 3
     row = table.to_pylist()[-1]
     assert row["label_up"] == 1
-    assert row["up_mid_change_5s"] == 0.05
+    assert round(row["up_mid_change_5s"], 6) == 0.05
     assert row["btc_reference"] is None
 
     sidecar = json.loads(output.with_suffix(".parquet.json").read_text(encoding="utf-8"))
