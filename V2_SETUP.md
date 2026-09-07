@@ -1,13 +1,13 @@
-# BTC5M V2 Local Setup (Paper Only)
+# BTC5M V2 Local Setup (Paper / Research Only)
 
 This setup is intentionally isolated from wallet credentials and live execution.
 
-## 1. Clone your fork
+## 1. Clone your fork and use the research branch
 
 ```bash
 git clone https://github.com/rodolfosuperagentgmailcom/5min-btc-polymarket.git
 cd 5min-btc-polymarket
-git checkout btc5m-v2-safety
+git checkout btc5m-v2-research
 ```
 
 ## 2. Create a local virtual environment
@@ -19,10 +19,10 @@ python -m pip install --upgrade pip
 pip install -r requirements-v2.txt
 ```
 
-## 3. Run the safety tests
+## 3. Run all V2 tests
 
 ```bash
-PYTHONPATH=. pytest -q tests/test_v2_safety.py
+PYTHONPATH=. pytest -q tests/test_v2_*.py
 ```
 
 Expected result: all tests pass.
@@ -43,24 +43,69 @@ The V2 controller:
 - checks the selected outcome's CLOB spread and top-three ask depth;
 - fails closed on stale/missing quote timestamps or repeated data errors.
 
-## 5. Watch output
+Watch/stop it with:
 
 ```bash
 scripts/btc5m_v2_ctl.sh logs
-```
-
-Common statuses:
-- `observe_no_threshold_candidate` — no side has reached the benchmark threshold.
-- `paper_candidate_blocked` — a candidate exists but fails a V2 safety gate.
-- `paper_signal` — benchmark candidate passed market safety gates; still no live order is placed.
-- `circuit_breaker` — repeated data errors stopped the run.
-
-## 6. Stop the observer
-
-```bash
 scripts/btc5m_v2_ctl.sh stop
 ```
 
+## 5. Record public Polymarket market data
+
+For a short test session:
+
+```bash
+PYTHONPATH=. python scripts/btc5m_v2_record.py --duration-sec 300 --output-root runtime/data
+```
+
+This records public market data only. It writes append-only raw JSONL, normalized Parquet CLOB snapshots, market metadata, and resolution information when available. No wallet/API trading credentials are loaded and no order path is used.
+
+Recorder layout:
+
+```text
+runtime/data/
+  YYYY-MM-DD/
+    btc-updown-5m-.../
+      clob_raw.jsonl
+      clob_snapshots_part-000000.parquet
+      metadata.json
+      resolution.json   # when resolved/available
+```
+
+## 6. Enrich completed markets with final results
+
+If a recording ended before the WebSocket delivered `market_resolved`, run:
+
+```bash
+PYTHONPATH=. python scripts/btc5m_v2_resolve.py --output-root runtime/data
+```
+
+## 7. Build the unified causal research dataset
+
+```bash
+PYTHONPATH=. python scripts/btc5m_v2_build_dataset.py \
+  --input-root runtime/data \
+  --output runtime/research/btc5m_features.parquet \
+  --sample-interval-ms 1000
+```
+
+The dataset builder:
+- samples each market causally at a minimum 1-second interval by default;
+- computes UP/DOWN midpoints, normalized market probability, spread/depth and order-book imbalance features;
+- computes causal 5s/15s/30s/60s midpoint/probability changes using only snapshots already known at that timestamp;
+- attaches final UP/DOWN labels only after feature construction;
+- reserves BTC reference/current/momentum/volatility/impulse columns as null until the verified settlement-aligned Chainlink BTC/USD 60-second TWAP report stream is available;
+- never substitutes an unrelated spot/CEX feed for the settlement feed.
+
+Output:
+
+```text
+runtime/research/btc5m_features.parquet
+runtime/research/btc5m_features.parquet.json
+```
+
+The JSON sidecar reports row count, market count, resolved-row count, sampling interval, and whether settlement-aligned BTC features are populated.
+
 ## Safety rule
 
-Do not add wallet keys or Polymarket API secrets for this phase. V2 remains paper/data-only until the market recorder, replay backtester, fee/slippage model, and forward-paper validation are complete.
+Do not add wallet keys or Polymarket trading API secrets for this phase. V2 remains paper/data-only until replay/backtesting, fee/slippage modeling, and forward-paper validation demonstrate a robust out-of-sample edge.
