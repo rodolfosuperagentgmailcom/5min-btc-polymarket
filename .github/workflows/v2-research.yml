@@ -22,4 +22,13 @@ jobs:
           python-version: "3.12"
       - run: python -m pip install --upgrade pip
       - run: pip install -r requirements-v2.txt
-      - run: PYTHONPATH=. pytest -q tests/test_v2_*.py
+      - name: Run V2 tests
+        run: PYTHONPATH=. pytest -q --junitxml=pytest-v2.xml tests/test_v2_*.py
+      - name: Upload pytest report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-v2-${{ github.run_id }}
+          path: pytest-v2.xml
+          if-no-files-found: warn
+          retention-days: 7
