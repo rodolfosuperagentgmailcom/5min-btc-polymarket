@@ -1,4 +1,5 @@
 name: BTC5M V2 Evidence Collection
+# Public-data-only evidence workflow. A push to this file runs the 5-minute smoke collection.
 
 on:
   push:
