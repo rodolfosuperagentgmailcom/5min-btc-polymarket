@@ -18,6 +18,7 @@ def _row(market_index: int, *, seconds_left: float = 120.0, offset_ns: int = 0) 
         "slug": f"btc-updown-5m-{market_index:04d}",
         "received_ts_ns": 1_900_000_000_000_000_000 + market_index * 300_000_000_000 + offset_ns,
         "seconds_left": seconds_left,
+        "recording_reconnects": 0,
         "market_skew_up": probability - 0.5,
         "up_market_probability": probability,
         "up_book_imbalance": 0.25 * direction,
@@ -90,6 +91,7 @@ def test_logistic_training_is_chronological_market_level_and_exportable(tmp_path
     )
 
     summary = result.summary
+    assert summary["recording_quality"] == "reconnects_required_zero"
     assert summary["markets_selected"] == 24
     assert summary["markets_eligible"] == 24
     assert summary["split"] == "chronological_market_level"
@@ -123,3 +125,33 @@ def test_training_refuses_too_few_independent_markets():
         assert "insufficient_markets_for_training" in str(exc)
     else:
         raise AssertionError("trainer must enforce minimum independent markets")
+
+
+def test_training_refuses_unverified_recording_quality():
+    rows = [_row(index) for index in range(12)]
+    rows[0].pop("recording_reconnects")
+    try:
+        fit_logistic_baseline(
+            rows,
+            feature_columns=MICROSTRUCTURE_FEATURE_COLUMNS,
+            minimum_markets=8,
+        )
+    except ValueError as exc:
+        assert "dataset_missing_recording_quality" in str(exc)
+    else:
+        raise AssertionError("trainer must reject rows without continuity metadata")
+
+
+def test_training_refuses_reconnected_recording():
+    rows = [_row(index) for index in range(12)]
+    rows[3]["recording_reconnects"] = 1
+    try:
+        fit_logistic_baseline(
+            rows,
+            feature_columns=MICROSTRUCTURE_FEATURE_COLUMNS,
+            minimum_markets=8,
+        )
+    except ValueError as exc:
+        assert "dataset_contains_reconnected_recording" in str(exc)
+    else:
+        raise AssertionError("trainer must reject rows from a reconnected recording")
