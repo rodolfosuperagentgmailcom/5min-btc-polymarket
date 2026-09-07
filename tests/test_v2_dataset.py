@@ -11,13 +11,15 @@ from btc5m_v2.research.dataset import (
     write_dataset,
 )
 
+EXPECTED_SOURCE = "https://data.chain.link/streams/btc-usd-twap-60s-streams"
+
 
 def _snapshot(ts_ns: int, *, up_mid: float, down_mid: float, seconds_left: float) -> dict:
     spread = 0.02
     return {
         "slug": "btc-updown-5m-test",
         "condition_id": "condition-test",
-        "resolution_source": "https://data.chain.link/streams/btc-usd-twap-60s-streams",
+        "resolution_source": EXPECTED_SOURCE,
         "market_end": "2030-01-01T00:05:00Z",
         "received_ts_ns": ts_ns,
         "received_iso": "2030-01-01T00:00:00Z",
@@ -59,7 +61,7 @@ def _write_market(tmp_path: Path) -> Path:
                 "up_token_id": "up-token",
                 "down_token_id": "down-token",
                 "market_end": "2030-01-01T00:05:00Z",
-                "resolution_source": "https://data.chain.link/streams/btc-usd-twap-60s-streams",
+                "resolution_source": EXPECTED_SOURCE,
                 "resolution": {
                     "resolved": True,
                     "winning_side": "UP",
@@ -72,6 +74,31 @@ def _write_market(tmp_path: Path) -> Path:
     return market_dir
 
 
+def _write_verified_btc(market_dir: Path, *, source: str = EXPECTED_SOURCE) -> None:
+    start = 1_900_000_000_000_000_000
+    samples = [
+        {"ts_ns": start - 60_000_000_000, "price": 99_800.0},
+        {"ts_ns": start - 30_000_000_000, "price": 99_900.0},
+        {"ts_ns": start - 15_000_000_000, "price": 99_940.0},
+        {"ts_ns": start - 5_000_000_000, "price": 99_950.0},
+        {"ts_ns": start, "price": 100_000.0},
+        {"ts_ns": start + 5_000_000_000, "price": 100_050.0},
+        {"ts_ns": start + 10_000_000_000, "price": 100_120.0},
+        {"ts_ns": start + 20_000_000_000, "price": 150_000.0},
+    ]
+    pq.write_table(pa.Table.from_pylist(samples), market_dir / "btc_samples.parquet")
+    (market_dir / "btc_metadata.json").write_text(
+        json.dumps(
+            {
+                "source": source,
+                "reference_price": 100_000.0,
+                "verified": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
 def test_dataset_builds_causal_lags_and_labels(tmp_path):
     market_dir = _write_market(tmp_path)
     rows = build_market_dataset_rows(market_dir, sample_interval_ms=1000)
@@ -81,9 +108,6 @@ def test_dataset_builds_causal_lags_and_labels(tmp_path):
     assert first["up_probability_change_5s"] is None
     assert round(second["up_probability_change_5s"], 6) == 0.05
     assert round(third["up_probability_change_5s"], 6) == 0.05
-
-    # No 15-second history exists yet, so the feature must remain null rather
-    # than reaching forward to a future observation.
     assert third["up_probability_change_15s"] is None
 
     assert third["resolved"] is True
@@ -92,10 +116,39 @@ def test_dataset_builds_causal_lags_and_labels(tmp_path):
     assert third["selected_side"] == "UP"
     assert third["selected_won"] is True
 
-    # Settlement-aligned BTC fields stay intentionally null until the verified
-    # Chainlink TWAP report stream is available.
     assert third["btc_current"] is None
     assert third["btc_impulse_z"] is None
+
+
+def test_verified_chainlink_btc_samples_populate_dataset_without_future_leakage(tmp_path):
+    market_dir = _write_market(tmp_path)
+    _write_verified_btc(market_dir)
+
+    rows = build_market_dataset_rows(market_dir, sample_interval_ms=1000)
+    third = rows[-1]
+    assert third["btc_reference"] == 100_000.0
+    assert third["btc_current"] == 100_120.0
+    assert third["btc_delta_usd"] == 120.0
+    assert third["btc_momentum_15s"] == 170.0
+    assert third["btc_momentum_30s"] == 220.0
+    assert third["btc_momentum_60s"] == 320.0
+    assert third["btc_realized_vol_30s"] is not None
+    assert third["btc_realized_vol_60s"] is not None
+    assert third["btc_impulse_z"] is not None
+    # The +20s sample is in the future relative to this +10s row and must not leak.
+    assert third["btc_current"] != 150_000.0
+
+
+def test_btc_source_mismatch_fails_closed(tmp_path):
+    market_dir = _write_market(tmp_path)
+    _write_verified_btc(market_dir, source="https://example.com/not-chainlink")
+
+    try:
+        build_market_dataset_rows(market_dir, sample_interval_ms=1000)
+    except ValueError as exc:
+        assert "btc_sample_source_mismatch" in str(exc)
+    else:
+        raise AssertionError("mismatched BTC source must fail closed")
 
 
 def test_dataset_write_roundtrip_and_summary(tmp_path):
