@@ -4,8 +4,10 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import time
 from pathlib import Path
 
+from btc5m_v2.research.alignment import sleep_until_aligned_start
 from btc5m_v2.research.btc_recorder import run_btc_recorder
 from btc5m_v2.research.recorder import run_recorder
 
@@ -50,8 +52,30 @@ def main() -> int:
             "start boundary for accepting a BTC reference price."
         ),
     )
+    parser.add_argument(
+        "--align-next-market",
+        action="store_true",
+        help=(
+            "Wait for the next 5-minute boundary before recording. Use this for "
+            "research runs that must capture a verified start reference and the "
+            "90-150 second decision window in the same market."
+        ),
+    )
+    parser.add_argument(
+        "--alignment-offset-sec",
+        type=float,
+        default=0.5,
+        help="Seconds after the next 5-minute boundary to start an aligned recording.",
+    )
     args = parser.parse_args()
 
+    aligned_target = None
+    if args.align_next_market:
+        aligned_target = sleep_until_aligned_start(
+            offset_sec=max(0.0, float(args.alignment_offset_sec))
+        )
+
+    started_ts = time.time()
     clob_completed, btc_completed = asyncio.run(
         _record_all(
             duration_sec=args.duration_sec,
@@ -64,6 +88,9 @@ def main() -> int:
     summary = {
         "status": "complete",
         "mode": "public-data-only",
+        "aligned_next_market": bool(args.align_next_market),
+        "aligned_target_ts": aligned_target,
+        "recording_started_ts": started_ts,
         "markets_recorded": len(clob_completed),
         "raw_clob_events": sum(item.raw_events for item in clob_completed),
         "clob_snapshots": sum(item.snapshots for item in clob_completed),
