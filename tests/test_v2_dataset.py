@@ -62,6 +62,7 @@ def _write_market(tmp_path: Path) -> Path:
                 "down_token_id": "down-token",
                 "market_end": "2030-01-01T00:05:00Z",
                 "resolution_source": EXPECTED_SOURCE,
+                "reconnects": 0,
                 "resolution": {
                     "resolved": True,
                     "winning_side": "UP",
@@ -110,6 +111,7 @@ def test_dataset_builds_causal_lags_and_labels(tmp_path):
     assert round(third["up_probability_change_5s"], 6) == 0.05
     assert third["up_probability_change_15s"] is None
 
+    assert third["recording_reconnects"] == 0
     assert third["resolved"] is True
     assert third["winning_side"] == "UP"
     assert third["label_up"] == 1
@@ -135,7 +137,6 @@ def test_verified_chainlink_btc_samples_populate_dataset_without_future_leakage(
     assert third["btc_realized_vol_30s"] is not None
     assert third["btc_realized_vol_60s"] is not None
     assert third["btc_impulse_z"] is not None
-    # The +20s sample is in the future relative to this +10s row and must not leak.
     assert third["btc_current"] != 150_000.0
 
 
@@ -160,12 +161,14 @@ def test_dataset_write_roundtrip_and_summary(tmp_path):
     assert summary["resolved_rows"] == 3
     assert summary["markets"] == 1
     assert summary["btc_features_populated"] is False
+    assert summary["recording_quality"] == "reconnects_required_zero"
     assert output.exists()
 
     table = pq.read_table(output)
     assert table.num_rows == 3
     row = table.to_pylist()[-1]
     assert row["label_up"] == 1
+    assert row["recording_reconnects"] == 0
     assert round(row["up_mid_change_5s"], 6) == 0.05
     assert row["btc_reference"] is None
 
