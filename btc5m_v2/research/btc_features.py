@@ -83,6 +83,8 @@ def btc_features_at(
             "btc_feed_age_ms": None,
             "btc_reference_price": reference_price,
             "btc_move_from_reference": None,
+            "btc_realized_log_move": None,
+            "btc_realized_move_usd": None,
             "btc_realized_log_move_60s": None,
             "btc_realized_move_usd_60s": None,
             "btc_impulse_z": None,
@@ -126,8 +128,11 @@ def btc_features_at(
         {
             "btc_reference_price": ref,
             "btc_move_from_reference": move_from_reference,
-            "btc_realized_log_move_60s": realized_log_move,
-            "btc_realized_move_usd_60s": realized_move_usd,
+            "btc_realized_log_move": realized_log_move,
+            "btc_realized_move_usd": realized_move_usd,
+            # Backward-compatible 60s aliases used by early V2 tests/callers.
+            "btc_realized_log_move_60s": realized_log_move if int(vol_window_sec) == 60 else None,
+            "btc_realized_move_usd_60s": realized_move_usd if int(vol_window_sec) == 60 else None,
             "btc_impulse_z": impulse_z,
         }
     )
