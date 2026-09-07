@@ -1,0 +1,40 @@
+name: BTC5M V2 Research
+
+on:
+  pull_request:
+    paths:
+      - "btc5m_v2/**"
+      - "scripts/btc5m_v2_*.py"
+      - "scripts/btc5m_v2_ctl.sh"
+      - "tests/test_v2_*.py"
+      - "requirements-v2.txt"
+      - ".github/workflows/v2-research.yml"
+  push:
+    branches:
+      - btc5m-v2-research
+
+jobs:
+  research-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --upgrade pip
+      - run: pip install -r requirements-v2.txt
+      - name: Validate operator entrypoints
+        run: |
+          bash -n scripts/btc5m_v2_ctl.sh
+          PYTHONPATH=. python -m py_compile scripts/btc5m_v2_paper_live.py btc5m_v2/online_paper.py
+          PYTHONPATH=. python scripts/btc5m_v2_paper_live.py --help >/dev/null
+      - name: Run V2 tests
+        run: PYTHONPATH=. pytest -q --junitxml=pytest-v2.xml tests/test_v2_*.py
+      - name: Upload pytest report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-v2-${{ github.run_id }}
+          path: pytest-v2.xml
+          if-no-files-found: warn
+          retention-days: 7

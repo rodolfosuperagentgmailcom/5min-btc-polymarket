@@ -1,0 +1,103 @@
+name: BTC5M V2 Recorder Smoke
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - btc5m-v2-research
+    paths:
+      - "btc5m_v2/feeds/polymarket_ws.py"
+      - "btc5m_v2/feeds/polymarket_twap.py"
+      - "btc5m_v2/market.py"
+      - "btc5m_v2/research/recorder.py"
+      - "btc5m_v2/research/btc_recorder.py"
+      - "scripts/btc5m_v2_record.py"
+      - "config/btc_5m_v2.yaml"
+      - "requirements-v2.txt"
+      - ".github/workflows/v2-recorder-smoke.yml"
+
+jobs:
+  recorder-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements-v2.txt
+      - name: Record public CLOB and BTC TWAP data
+        run: PYTHONPATH=. python scripts/btc5m_v2_record.py --duration-sec 12 --output-root runtime/smoke --parquet-batch-rows 5
+      - name: Validate CLOB and BTC artifacts
+        run: |
+          PYTHONPATH=. python - <<'PY'
+          import json
+          from pathlib import Path
+          import pyarrow.parquet as pq
+
+          expected_source = "https://data.chain.link/streams/btc-usd-twap-60s-streams"
+          root = Path("runtime/smoke")
+          clob_raw = sorted(root.glob("*/*/clob_raw.jsonl"))
+          clob_parquet = sorted(root.glob("*/*/clob_snapshots_part-*.parquet"))
+          market_metadata = sorted(root.glob("*/*/metadata.json"))
+          btc_raw = sorted(root.glob("*/*/btc_raw.jsonl"))
+          btc_parquet = sorted(root.glob("*/*/btc_samples.parquet"))
+          btc_metadata = sorted(root.glob("*/*/btc_metadata.json"))
+
+          assert clob_raw, "no CLOB raw JSONL recorded"
+          assert clob_parquet, "no CLOB Parquet snapshots recorded"
+          assert market_metadata, "no market metadata file recorded"
+          assert btc_raw, "no BTC raw JSONL recorded"
+          assert btc_parquet, "no BTC Parquet samples recorded"
+          assert btc_metadata, "no BTC metadata file recorded"
+
+          clob_lines = clob_raw[0].read_text(encoding="utf-8").splitlines()
+          assert clob_lines, "CLOB raw JSONL is empty"
+          first_clob = json.loads(clob_lines[0])
+          assert "received_ts_ns" in first_clob
+          assert "event" in first_clob
+
+          clob_table = pq.read_table(clob_parquet[0])
+          assert clob_table.num_rows > 0, "CLOB Parquet has no snapshots"
+          required_clob = {"received_ts_ns", "seconds_left", "up_bid", "up_ask", "down_bid", "down_ask"}
+          assert required_clob.issubset(set(clob_table.column_names))
+
+          market_meta = json.loads(market_metadata[0].read_text(encoding="utf-8"))
+          assert market_meta["credentials_loaded"] is False
+          assert market_meta["order_path_used"] is False
+          assert market_meta["raw_events"] > 0
+          assert market_meta["snapshots"] > 0
+          assert market_meta["resolution_source"].rstrip("/") == expected_source
+
+          btc_lines = btc_raw[0].read_text(encoding="utf-8").splitlines()
+          assert btc_lines, "BTC raw JSONL is empty"
+          first_btc_raw = json.loads(btc_lines[0])
+          assert "received_ts_ns" in first_btc_raw
+          assert "chainlink_ts_ms" in first_btc_raw
+          assert "price" in first_btc_raw
+
+          btc_table = pq.read_table(btc_parquet[0])
+          assert btc_table.num_rows > 0, "BTC Parquet has no samples"
+          required_btc = {"ts_ns", "price", "chainlink_ts_ms", "chainlink_age_ms", "window_seconds"}
+          assert required_btc.issubset(set(btc_table.column_names))
+          first_btc = btc_table.to_pylist()[0]
+          assert first_btc["ts_ns"] > first_btc["chainlink_ts_ms"] * 1_000_000
+          assert first_btc["price"] > 0
+          assert first_btc["window_seconds"] == 60
+
+          btc_meta = json.loads(btc_metadata[0].read_text(encoding="utf-8"))
+          assert btc_meta["source"].rstrip("/") == expected_source
+          assert btc_meta["credentials_loaded"] is False
+          assert btc_meta["order_path_used"] is False
+          assert btc_meta["samples"] > 0
+
+          print(json.dumps({
+              "status": "combined_recorder_smoke_ok",
+              "clob_raw_events": market_meta["raw_events"],
+              "clob_snapshots": market_meta["snapshots"],
+              "clob_parquet_rows_first_part": clob_table.num_rows,
+              "btc_samples": btc_meta["samples"],
+              "btc_parquet_rows": btc_table.num_rows,
+              "btc_reference_verified": btc_meta["reference_verified"],
+              "resolution_source": market_meta["resolution_source"],
+          }, indent=2))
+          PY

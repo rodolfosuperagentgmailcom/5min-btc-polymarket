@@ -1,0 +1,27 @@
+name: BTC5M V2 WebSocket Smoke
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - btc5m-v2-research
+    paths:
+      - "btc5m_v2/feeds/polymarket_ws.py"
+      - "btc5m_v2/market.py"
+      - "btc5m_v2/config.py"
+      - "btc5m_v2/safety.py"
+      - "scripts/btc5m_v2_ws_smoke.py"
+      - "config/btc_5m_v2.yaml"
+      - "requirements-v2.txt"
+      - ".github/workflows/v2-ws-smoke.yml"
+
+jobs:
+  ws-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements-v2.txt
+      - run: PYTHONPATH=. python scripts/btc5m_v2_ws_smoke.py

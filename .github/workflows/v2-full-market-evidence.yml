@@ -1,0 +1,189 @@
+name: BTC5M V2 Full-Market Evidence
+
+on:
+  workflow_dispatch:
+    inputs:
+      legacy_threshold:
+        description: "Legacy stronger-side ask threshold"
+        required: true
+        default: "0.70"
+  push:
+    branches:
+      - btc5m-v2-research
+    paths:
+      - ".github/evidence-trigger.txt"
+
+jobs:
+  full-market-evidence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    env:
+      LEGACY_THRESHOLD: ${{ inputs.legacy_threshold || '0.70' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: python -m pip install --upgrade pip
+      - run: pip install -r requirements-v2.txt
+
+      - name: Record one boundary-aligned market
+        shell: bash
+        run: |
+          set -euo pipefail
+          PYTHONPATH=. python scripts/btc5m_v2_record.py \
+            --align-next-market \
+            --alignment-offset-sec 0.5 \
+            --duration-sec 305 \
+            --output-root runtime/data \
+            --parquet-batch-rows 250
+
+      - name: Enrich market-specific fee schedules
+        run: PYTHONPATH=. python scripts/btc5m_v2_enrich_fees.py --output-root runtime/data
+
+      - name: Poll Gamma for final resolutions
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          import subprocess
+          import sys
+          import time
+          from pathlib import Path
+
+          def unresolved():
+              paths = []
+              for metadata in sorted(Path("runtime/data").glob("*/*/metadata.json")):
+                  payload = json.loads(metadata.read_text(encoding="utf-8"))
+                  resolution = payload.get("resolution") or {}
+                  if resolution.get("resolved") is not True or resolution.get("winning_side") not in {"UP", "DOWN"}:
+                      paths.append(metadata)
+              return paths
+
+          remaining = unresolved()
+          for attempt in range(1, 31):
+              if not remaining:
+                  break
+              subprocess.run(
+                  [sys.executable, "scripts/btc5m_v2_resolve.py", "--output-root", "runtime/data", "--force"],
+                  check=True,
+                  env={**os.environ, "PYTHONPATH": "."},
+              )
+              remaining = unresolved()
+              print(f"resolution_attempt={attempt} unresolved={len(remaining)}")
+              if remaining and attempt < 30:
+                  time.sleep(10)
+
+          if remaining:
+              print("Markets still unresolved and therefore not V2-ready:")
+              for path in remaining:
+                  print(path)
+          PY
+
+      - name: Write readiness report and ready-only dataset
+        shell: bash
+        run: |
+          set -euo pipefail
+          PYTHONPATH=. python - <<'PY'
+          import json
+          from pathlib import Path
+          from btc5m_v2.research.readiness import readiness_report
+          from btc5m_v2.research.ready_dataset import write_ready_dataset
+
+          research = Path("runtime/research")
+          research.mkdir(parents=True, exist_ok=True)
+          report = readiness_report("runtime/data")
+          (research / "readiness.json").write_text(
+              json.dumps(report, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          print(json.dumps({
+              "markets_seen": report["markets_seen"],
+              "v2_ready_markets": report["v2_ready_markets"],
+              "decision_window_markets": report.get("decision_window_markets"),
+              "resolved_markets": report["resolved_markets"],
+              "verified_btc_reference_markets": report["verified_btc_reference_markets"],
+              "reason_counts": report["reason_counts"],
+          }, indent=2, sort_keys=True))
+
+          if report["v2_ready_markets"] > 0:
+              summary = write_ready_dataset(
+                  "runtime/data",
+                  research / "btc5m_ready_features.parquet",
+                  sample_interval_ms=1000,
+              )
+              print(json.dumps(summary, indent=2, sort_keys=True))
+          PY
+
+      - name: Run legacy latency control on resolved recordings
+        run: >-
+          PYTHONPATH=. python scripts/btc5m_v2_paper_benchmark.py
+          --input-root runtime/data
+          --threshold "$LEGACY_THRESHOLD"
+          --notional-usd 5
+          --max-participation-pct 20
+          --latency-ms 0 100 250 500 1000
+          --output runtime/research/legacy_latency_sweep.json
+
+      - name: Create manifest
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          readiness_path = Path("runtime/research/readiness.json")
+          latency_path = Path("runtime/research/legacy_latency_sweep.json")
+          manifest = {
+              "mode": "public-data-only-boundary-aligned",
+              "live_execution": False,
+              "credentials_loaded": False,
+              "trigger": "workflow_dispatch" if "${{ github.event_name }}" == "workflow_dispatch" else "one_shot_push",
+              "readiness": json.loads(readiness_path.read_text(encoding="utf-8")),
+              "legacy_latency_sweep": json.loads(latency_path.read_text(encoding="utf-8")),
+          }
+          Path("runtime/research/full_market_manifest.json").write_text(
+              json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          print(json.dumps(manifest, indent=2, sort_keys=True))
+          PY
+
+      - name: Upload evidence bundle
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: btc5m-v2-full-market-${{ github.run_id }}
+          path: |
+            runtime/data/**
+            runtime/research/**
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Require at least one fully V2-ready market
+        if: always()
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path("runtime/research/readiness.json")
+          if not path.exists():
+              raise SystemExit("readiness report missing")
+          report = json.loads(path.read_text(encoding="utf-8"))
+          ready = int(report.get("v2_ready_markets") or 0)
+          if ready < 1:
+              raise SystemExit(
+                  "capture artifact uploaded, but no market is fully V2-ready; "
+                  "use the delayed reconciliation workflow after settlement finalizes"
+              )
+          print(f"v2_ready_markets={ready}")
+          PY
