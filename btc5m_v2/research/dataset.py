@@ -8,8 +8,9 @@ from typing import Any, Iterable
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from btc5m_v2.research.btc_features import BTCSample, btc_features_at
 from btc5m_v2.research.features import build_feature_row, feature_payload
-from btc5m_v2.research.replay import iter_snapshot_rows, read_resolution
+from btc5m_v2.research.replay import iter_snapshot_rows, read_btc_samples_parquet, read_resolution
 
 DEFAULT_LAGS_SECONDS = (5, 15, 30, 60)
 
@@ -46,9 +47,6 @@ DATASET_SCHEMA = pa.schema(
         ("up_mid_change_15s", pa.float64()),
         ("up_mid_change_30s", pa.float64()),
         ("up_mid_change_60s", pa.float64()),
-        # Reserved for the verified settlement-aligned Chainlink TWAP stream.
-        # These remain null until that feed is ingested; no substitute BTC feed
-        # is silently used for model training.
         ("btc_reference", pa.float64()),
         ("btc_current", pa.float64()),
         ("btc_delta_usd", pa.float64()),
@@ -58,8 +56,6 @@ DATASET_SCHEMA = pa.schema(
         ("btc_realized_vol_30s", pa.float64()),
         ("btc_realized_vol_60s", pa.float64()),
         ("btc_impulse_z", pa.float64()),
-        # Labels are appended after causal feature construction. They must never
-        # be passed to a signal function as predictors.
         ("resolved", pa.bool_()),
         ("winning_side", pa.string()),
         ("label_up", pa.int8()),
@@ -92,8 +88,6 @@ def _asof_value(
     current_index: int,
     target_ts_ns: int,
 ) -> float | None:
-    # bisect only through the current row. This is the anti-leakage invariant:
-    # no future snapshot can contribute to a feature at time t.
     idx = bisect.bisect_right(timestamps, target_ts_ns, hi=current_index + 1) - 1
     if idx < 0:
         return None
@@ -120,6 +114,88 @@ def _lag_change(
     return None if previous is None else current - previous
 
 
+def _normalize_source(value: Any) -> str:
+    return str(value or "").strip().rstrip("/")
+
+
+def _verified_btc_inputs(market_dir: str | Path) -> tuple[list[BTCSample], float | None]:
+    root = Path(market_dir)
+    sample_path = root / "btc_samples.parquet"
+    if not sample_path.exists():
+        return [], None
+
+    btc_metadata_path = root / "btc_metadata.json"
+    market_metadata_path = root / "metadata.json"
+    if not btc_metadata_path.exists():
+        raise ValueError("btc_samples.parquet requires btc_metadata.json")
+    if not market_metadata_path.exists():
+        raise ValueError("verified BTC join requires market metadata.json")
+
+    btc_metadata = json.loads(btc_metadata_path.read_text(encoding="utf-8"))
+    market_metadata = json.loads(market_metadata_path.read_text(encoding="utf-8"))
+    expected_source = _normalize_source(market_metadata.get("resolution_source"))
+    actual_source = _normalize_source(btc_metadata.get("source"))
+    if not expected_source or not actual_source or actual_source != expected_source:
+        raise ValueError("btc_sample_source_mismatch")
+
+    samples = read_btc_samples_parquet(sample_path)
+    if not samples:
+        raise ValueError("btc_samples.parquet contains no usable samples")
+
+    raw_reference = btc_metadata.get("reference_price")
+    reference = None if raw_reference in (None, "") else float(raw_reference)
+    return samples, reference
+
+
+def _populate_btc_features(
+    row: dict[str, Any],
+    *,
+    samples: list[BTCSample],
+    reference_price: float | None,
+) -> None:
+    if not samples:
+        for name in (
+            "btc_reference",
+            "btc_current",
+            "btc_delta_usd",
+            "btc_momentum_15s",
+            "btc_momentum_30s",
+            "btc_momentum_60s",
+            "btc_realized_vol_30s",
+            "btc_realized_vol_60s",
+            "btc_impulse_z",
+        ):
+            row[name] = None
+        return
+
+    now_ns = int(row["received_ts_ns"])
+    features_60 = btc_features_at(
+        samples,
+        now_ns=now_ns,
+        reference_price=reference_price,
+        vol_window_sec=60,
+    )
+    features_30 = btc_features_at(
+        samples,
+        now_ns=now_ns,
+        reference_price=reference_price,
+        vol_window_sec=30,
+    )
+    row.update(
+        {
+            "btc_reference": features_60.get("btc_reference_price"),
+            "btc_current": features_60.get("btc_price"),
+            "btc_delta_usd": features_60.get("btc_move_from_reference"),
+            "btc_momentum_15s": features_60.get("btc_move_15s"),
+            "btc_momentum_30s": features_60.get("btc_move_30s"),
+            "btc_momentum_60s": features_60.get("btc_move_60s"),
+            "btc_realized_vol_30s": features_30.get("btc_realized_move_usd"),
+            "btc_realized_vol_60s": features_60.get("btc_realized_move_usd"),
+            "btc_impulse_z": features_60.get("btc_impulse_z"),
+        }
+    )
+
+
 def build_market_dataset_rows(
     market_dir: str | Path,
     *,
@@ -133,6 +209,7 @@ def build_market_dataset_rows(
     up_probabilities = [row.get("up_market_probability") for row in features]
     up_mids = [row.get("up_mid") for row in features]
 
+    btc_samples, btc_reference = _verified_btc_inputs(market_dir)
     resolved, winning_side = read_resolution(market_dir)
     label_up = None if not resolved or winning_side not in {"UP", "DOWN"} else int(winning_side == "UP")
 
@@ -156,18 +233,7 @@ def build_market_dataset_rows(
                 timestamps, up_mids, current_index=idx, lag_seconds=lag
             )
 
-        for name in (
-            "btc_reference",
-            "btc_current",
-            "btc_delta_usd",
-            "btc_momentum_15s",
-            "btc_momentum_30s",
-            "btc_momentum_60s",
-            "btc_realized_vol_30s",
-            "btc_realized_vol_60s",
-            "btc_impulse_z",
-        ):
-            row.setdefault(name, None)
+        _populate_btc_features(row, samples=btc_samples, reference_price=btc_reference)
 
         row["resolved"] = resolved
         row["winning_side"] = winning_side
