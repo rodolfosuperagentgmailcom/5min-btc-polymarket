@@ -9,6 +9,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import brier_score_loss, log_loss, roc_auc_score
 from sklearn.preprocessing import StandardScaler
 
+from btc5m_v2.research.quality import validate_recording_quality_rows
 from btc5m_v2.research.train_model import (
     DEFAULT_FEATURE_COLUMNS,
     eligible_rows,
@@ -149,8 +150,10 @@ def expanding_walk_forward(
     if regularization_c <= 0:
         raise ValueError("regularization_c must be positive")
 
+    input_rows = [dict(row) for row in rows]
+    validate_recording_quality_rows(input_rows)
     selected = select_market_decision_rows(
-        rows,
+        input_rows,
         target_seconds_left=target_seconds_left,
         seconds_left_min=seconds_left_min,
         seconds_left_max=seconds_left_max,
@@ -219,6 +222,7 @@ def expanding_walk_forward(
     return {
         "evaluation": "expanding_window_walk_forward_market_level",
         "feature_columns": list(columns),
+        "recording_quality": "reconnects_required_zero",
         "markets_selected": len(selected),
         "markets_eligible": len(clean),
         "markets_dropped_missing_features": dropped,
