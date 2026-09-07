@@ -25,7 +25,9 @@ def test_breakeven_accounts_for_buy_fee_being_deducted_in_shares() -> None:
 
 def test_fee_disabled_market_has_price_as_breakeven() -> None:
     assert hold_to_resolution_breakeven_probability(0.70, 0.07, fees_enabled=False) == 0.70
-    assert probability_edge_after_entry_fee(0.74, 0.70, 0.07, fees_enabled=False) == 0.04
+    assert round(
+        probability_edge_after_entry_fee(0.74, 0.70, 0.07, fees_enabled=False), 8
+    ) == 0.04
 
 
 def test_fee_raises_probability_hurdle() -> None:
