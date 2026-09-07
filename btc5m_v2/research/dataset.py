@@ -19,6 +19,7 @@ DATASET_SCHEMA = pa.schema(
         ("slug", pa.string()),
         ("received_ts_ns", pa.int64()),
         ("seconds_left", pa.float64()),
+        ("recording_reconnects", pa.int32()),
         ("up_mid", pa.float64()),
         ("down_mid", pa.float64()),
         ("up_ask", pa.float64()),
@@ -118,6 +119,21 @@ def _normalize_source(value: Any) -> str:
     return str(value or "").strip().rstrip("/")
 
 
+def _recording_reconnects(market_dir: str | Path) -> int:
+    metadata_path = Path(market_dir) / "metadata.json"
+    if not metadata_path.exists():
+        raise ValueError("missing_market_metadata")
+    payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+    raw = payload.get("reconnects", 0)
+    try:
+        reconnects = int(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("invalid_recording_reconnects") from exc
+    if reconnects < 0:
+        raise ValueError("invalid_recording_reconnects")
+    return reconnects
+
+
 def _verified_btc_inputs(market_dir: str | Path) -> tuple[list[BTCSample], float | None]:
     root = Path(market_dir)
     sample_path = root / "btc_samples.parquet"
@@ -202,6 +218,10 @@ def build_market_dataset_rows(
     sample_interval_ms: int = 1000,
     lag_seconds: tuple[int, ...] = DEFAULT_LAGS_SECONDS,
 ) -> list[dict[str, Any]]:
+    reconnects = _recording_reconnects(market_dir)
+    if reconnects != 0:
+        raise ValueError(f"recording_reconnected:{reconnects}")
+
     raw_rows = list(iter_snapshot_rows(market_dir))
     sampled = _downsample(raw_rows, sample_interval_ms)
     features = [feature_payload(build_feature_row(row)) for row in sampled]
@@ -216,6 +236,7 @@ def build_market_dataset_rows(
     output: list[dict[str, Any]] = []
     for idx, feature in enumerate(features):
         row = dict(feature)
+        row["recording_reconnects"] = reconnects
         row["ask_overround"] = None if row.get("ask_sum") is None else float(row["ask_sum"]) - 1.0
         up_prob = row.get("up_market_probability")
         row["market_skew_up"] = None if up_prob is None else float(up_prob) - 0.5
@@ -288,6 +309,7 @@ def write_dataset(
         "markets": len({row["slug"] for row in rows}),
         "sample_interval_ms": sample_interval_ms,
         "btc_features_populated": any(row.get("btc_current") is not None for row in rows),
+        "recording_quality": "reconnects_required_zero",
     }
     destination.with_suffix(destination.suffix + ".json").write_text(
         json.dumps(summary, indent=2), encoding="utf-8"
