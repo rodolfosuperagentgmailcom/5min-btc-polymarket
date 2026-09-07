@@ -56,6 +56,17 @@ def _net_trade(
     )
 
 
+def _max_drawdown_per_share(trades: Iterable[NetLegacyTrade]) -> float:
+    equity = 0.0
+    peak = 0.0
+    max_drawdown = 0.0
+    for trade in trades:
+        equity += trade.net_pnl_per_share
+        peak = max(peak, equity)
+        max_drawdown = max(max_drawdown, peak - equity)
+    return max_drawdown
+
+
 def benchmark_legacy_threshold_net(
     rows: Iterable[dict[str, Any]],
     *,
@@ -88,6 +99,7 @@ def benchmark_legacy_threshold_net(
         )
         for trade in gross_trades
     ]
+    trades.sort(key=lambda trade: (trade.received_ts_ns, trade.slug))
 
     wins = sum(1 for trade in trades if trade.won)
     net_total = sum(trade.net_pnl_per_share for trade in trades)
@@ -95,6 +107,8 @@ def benchmark_legacy_threshold_net(
     total_slippage = sum(
         trade.modeled_entry_price - trade.quoted_entry_ask for trade in trades
     )
+    gross_profit = sum(max(0.0, trade.net_pnl_per_share) for trade in trades)
+    gross_loss = sum(max(0.0, -trade.net_pnl_per_share) for trade in trades)
 
     summary = {
         "strategy": "legacy_stronger_ask_threshold_net",
@@ -118,6 +132,9 @@ def benchmark_legacy_threshold_net(
         if not trades
         else sum(trade.net_return_on_cost for trade in trades) / len(trades),
         "gross_pnl_per_share_total": gross_summary["gross_pnl_per_share_total"],
+        "profit_factor": None if gross_loss <= 0 else gross_profit / gross_loss,
+        "max_drawdown_per_share": _max_drawdown_per_share(trades),
+        "trade_order": "received_ts_ns_ascending",
         "warning": (
             "Cost-aware control benchmark only. Fill probability and market-specific "
             "historical fee metadata must be added before interpreting as tradable P&L."
