@@ -41,6 +41,7 @@ def evaluate_buy_edge(
     notional_usd: float,
     fees_enabled: bool,
     fee_rate: float,
+    fee_exponent: float = 1.0,
     is_taker: bool = True,
     max_book_participation_pct: float | None = None,
 ) -> SideEdge:
@@ -67,6 +68,7 @@ def evaluate_buy_edge(
     fee = fee_for_fills(
         fill.fills,
         fee_rate=fee_rate,
+        fee_exponent=fee_exponent,
         fees_enabled=fees_enabled,
         is_taker=is_taker,
     )
