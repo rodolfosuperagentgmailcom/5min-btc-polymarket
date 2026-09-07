@@ -106,6 +106,27 @@ runtime/research/btc5m_features.parquet.json
 
 The JSON sidecar reports row count, market count, resolved-row count, sampling interval, and whether settlement-aligned BTC features are populated.
 
+## 8. Benchmark the actual legacy `.70` runner
+
+Once you have resolved markets in the unified dataset:
+
+```bash
+PYTHONPATH=. python scripts/btc5m_v2_benchmark.py \
+  --dataset runtime/research/btc5m_features.parquet \
+  --threshold 0.70 \
+  --min-seconds-left 60 \
+  --output runtime/research/legacy_threshold_benchmark.json
+```
+
+This control benchmark intentionally mirrors the current public runner's behavior:
+- first qualifying threshold signal per market;
+- UP or DOWN qualifies when its ask is at least `.70`;
+- if both qualify, it chooses the higher ask;
+- it enforces only the legacy minimum 60 seconds remaining, with no upper entry-window bound;
+- it holds the selected outcome to the final UP/DOWN label for the benchmark calculation.
+
+The benchmark is explicitly **gross-only**. Fees, slippage, book participation, latency and fill probability are not yet included, so positive gross P&L must not be interpreted as a tradable edge.
+
 ## Safety rule
 
 Do not add wallet keys or Polymarket trading API secrets for this phase. V2 remains paper/data-only until replay/backtesting, fee/slippage modeling, and forward-paper validation demonstrate a robust out-of-sample edge.
