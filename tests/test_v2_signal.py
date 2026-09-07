@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from btc5m_v2.config import V2Config
-from btc5m_v2.strategy.signal import decide_snapshot
+from btc5m_v2.strategy.model import LogisticProbabilityModel
+from btc5m_v2.strategy.signal import decide_snapshot, decide_snapshot_with_model
 
 EXPECTED_SOURCE = "https://data.chain.link/streams/btc-usd-twap-60s-streams"
 
@@ -48,6 +49,18 @@ def row(**overrides):
     }
     payload.update(overrides)
     return payload
+
+
+def simple_model() -> LogisticProbabilityModel:
+    # sigmoid(1) ~= 0.731, enough to clear the test UP edge gate at a 0.60 ask.
+    return LogisticProbabilityModel(
+        feature_columns=("model_signal",),
+        means=(0.0,),
+        scales=(1.0,),
+        coefficients=(1.0,),
+        intercept=0.0,
+        model_version="test-model",
+    )
 
 
 def test_decision_selects_positive_fee_adjusted_edge():
@@ -113,3 +126,36 @@ def test_entry_window_is_enforced():
     late = decide_snapshot(row(seconds_left=89), q_up=0.70, cfg=cfg())
     assert early.trade is False and "too_early" in early.reasons
     assert late.trade is False and "too_late" in late.reasons
+
+
+def test_model_adapter_matches_explicit_probability_decision():
+    model = simple_model()
+    payload = row(model_signal=1.0)
+    q_up = model.predict_up(payload)
+    assert q_up is not None
+
+    explicit = decide_snapshot(payload, q_up=q_up, cfg=cfg())
+    modeled = decide_snapshot_with_model(payload, model=model, cfg=cfg())
+
+    assert modeled.trade == explicit.trade
+    assert modeled.side == explicit.side
+    assert modeled.model_probability == explicit.model_probability
+    assert modeled.edge == explicit.edge
+
+
+def test_model_adapter_fails_closed_when_required_feature_is_missing():
+    decision = decide_snapshot_with_model(row(), model=simple_model(), cfg=cfg())
+    assert decision.trade is False
+    assert decision.model_probability is None
+    assert "missing_model_features" in decision.reasons
+    assert "missing_model_feature:model_signal" in decision.reasons
+
+
+def test_model_adapter_cannot_bypass_safety_gate():
+    decision = decide_snapshot_with_model(
+        row(model_signal=2.0, seconds_left=151),
+        model=simple_model(),
+        cfg=cfg(),
+    )
+    assert decision.trade is False
+    assert "too_early" in decision.reasons
