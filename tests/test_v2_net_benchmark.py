@@ -61,3 +61,28 @@ def test_fee_schedule_is_not_assumed_when_disabled():
     assert trades[0].entry_fee_per_share == 0.0
     assert trades[0].net_pnl_per_share == 0.28
     assert summary["fee_enabled"] is False
+
+
+def test_summary_reports_chronological_drawdown_and_profit_factor():
+    rows = [
+        # Intentionally use slugs whose alphabetical order differs from time order.
+        row("z-first", 1, 0.70, 0.30, "UP"),   # +0.30
+        row("a-second", 2, 0.70, 0.30, "DOWN"), # -0.70
+        row("m-third", 3, 0.70, 0.30, "UP"),    # +0.30
+    ]
+    trades, summary = benchmark_legacy_threshold_net(rows)
+
+    assert [trade.slug for trade in trades] == ["z-first", "a-second", "m-third"]
+    assert summary["trade_order"] == "received_ts_ns_ascending"
+    assert round(summary["max_drawdown_per_share"], 10) == 0.70
+    assert round(summary["profit_factor"], 10) == round(0.60 / 0.70, 10)
+
+
+def test_profit_factor_is_none_when_there_are_no_losses():
+    rows = [
+        row("m1", 1, 0.70, 0.30, "UP"),
+        row("m2", 2, 0.71, 0.29, "UP"),
+    ]
+    _, summary = benchmark_legacy_threshold_net(rows)
+    assert summary["profit_factor"] is None
+    assert summary["max_drawdown_per_share"] == 0.0
