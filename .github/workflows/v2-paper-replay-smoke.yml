@@ -1,0 +1,126 @@
+name: BTC5M V2 Paper Replay Smoke
+
+on:
+  push:
+    branches:
+      - btc5m-v2-research
+    paths:
+      - ".github/workflows/v2-paper-replay-smoke.yml"
+      - "btc5m_v2/execution/paper.py"
+      - "btc5m_v2/research/paper_benchmark.py"
+      - "scripts/btc5m_v2_paper_benchmark.py"
+      - "tests/test_v2_paper_execution.py"
+  workflow_dispatch:
+
+jobs:
+  public-paper-replay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --upgrade pip
+      - run: pip install -r requirements-v2.txt
+
+      - name: Record 20 seconds of public BTC5M CLOB data
+        run: PYTHONPATH=. python scripts/btc5m_v2_record.py --duration-sec 20 --output-root runtime/data --parquet-batch-rows 100
+
+      - name: Enrich public market fee schedule
+        run: PYTHONPATH=. python scripts/btc5m_v2_enrich_fees.py --output-root runtime/data
+
+      - name: Wait for the captured market to close
+        shell: bash
+        run: |
+          PYTHONPATH=. python - <<'PY'
+          import datetime as dt
+          import json
+          import time
+          from pathlib import Path
+
+          paths = sorted(Path("runtime/data").glob("*/*/metadata.json"))
+          if len(paths) != 1:
+              raise SystemExit(f"expected exactly one recorded market, found {len(paths)}")
+          payload = json.loads(paths[0].read_text(encoding="utf-8"))
+          end_iso = str(payload["market_end"])
+          end_ts = dt.datetime.fromisoformat(end_iso.replace("Z", "+00:00")).timestamp()
+          sleep_sec = max(0.0, end_ts - time.time() + 5.0)
+          if sleep_sec > 360.0:
+              raise SystemExit(f"unexpected wait to market close: {sleep_sec:.1f}s")
+          print(f"market={payload['slug']} waiting={sleep_sec:.1f}s until post-close")
+          time.sleep(sleep_sec)
+          PY
+
+      - name: Poll public Gamma until final resolution is attached
+        shell: bash
+        run: |
+          PYTHONPATH=. python - <<'PY'
+          import json
+          import subprocess
+          import sys
+          import time
+          from pathlib import Path
+
+          metadata = next(Path("runtime/data").glob("*/*/metadata.json"))
+          for attempt in range(1, 19):
+              subprocess.run(
+                  [sys.executable, "scripts/btc5m_v2_resolve.py", "--output-root", "runtime/data", "--force"],
+                  check=True,
+                  env={**__import__("os").environ, "PYTHONPATH": "."},
+              )
+              payload = json.loads(metadata.read_text(encoding="utf-8"))
+              resolution = payload.get("resolution") or {}
+              if resolution.get("resolved") is True and resolution.get("winning_side") in {"UP", "DOWN"}:
+                  print(json.dumps(resolution, indent=2))
+                  break
+              if attempt == 18:
+                  raise SystemExit("captured market did not resolve within smoke polling window")
+              time.sleep(10)
+          PY
+
+      - name: Exercise paper fill plumbing across latency assumptions
+        run: >-
+          PYTHONPATH=. python scripts/btc5m_v2_paper_benchmark.py
+          --input-root runtime/data
+          --threshold 0.50
+          --notional-usd 1
+          --max-participation-pct 100
+          --latency-ms 0 100 250 500 1000
+          --output runtime/research/paper_smoke_050.json
+
+      - name: Assert the smoke path executed at least one trade
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          payload = json.loads(Path("runtime/research/paper_smoke_050.json").read_text(encoding="utf-8"))
+          zero = next(item for item in payload["results"] if float(item["latency_ms"]) == 0.0)
+          if int(zero["executed_trades"]) < 1:
+              raise SystemExit(f"paper smoke did not execute a 0ms trade: {zero}")
+          print(json.dumps(zero, indent=2))
+          PY
+
+      - name: Run honest legacy 0.70 paper latency sweep
+        run: >-
+          PYTHONPATH=. python scripts/btc5m_v2_paper_benchmark.py
+          --input-root runtime/data
+          --threshold 0.70
+          --notional-usd 5
+          --max-participation-pct 20
+          --latency-ms 0 100 250 500 1000
+          --output runtime/research/legacy_070_latency_sweep.json
+
+      - name: Show legacy benchmark result
+        run: cat runtime/research/legacy_070_latency_sweep.json
+
+      - name: Upload public replay smoke artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: btc5m-v2-paper-replay-${{ github.run_id }}
+          path: |
+            runtime/data/**
+            runtime/research/**
+          if-no-files-found: warn
+          retention-days: 7
