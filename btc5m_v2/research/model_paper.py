@@ -12,6 +12,7 @@ from btc5m_v2.execution.paper import simulate_taker_buy_to_settlement
 from btc5m_v2.research.book_replay import ReplayedBookSnapshot, reconstruct_and_align_books
 from btc5m_v2.research.fee_enrich import read_fee_schedule
 from btc5m_v2.research.paper_benchmark import PaperBenchmarkTrade, benchmark_market_paper
+from btc5m_v2.research.quality import require_contiguous_recording
 from btc5m_v2.research.replay import iter_snapshot_rows, read_resolution
 from btc5m_v2.research.train_model import (
     DEFAULT_FEATURE_COLUMNS,
@@ -163,6 +164,11 @@ def benchmark_model_market(
     max_participation_pct: float = 20.0,
 ) -> tuple[ModelPaperTrade | None, str | None]:
     directory = Path(market_dir)
+    try:
+        require_contiguous_recording(directory)
+    except ValueError as exc:
+        return None, str(exc)
+
     resolved, winning_side = read_resolution(directory)
     if not resolved or winning_side not in {"UP", "DOWN"}:
         return None, "unresolved_market"
