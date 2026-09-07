@@ -6,7 +6,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from btc5m_v2.research.btc_features import BTCSample, btc_features_at
-from btc5m_v2.research.features import build_feature_row, depth_imbalance, midpoint
+from btc5m_v2.research.features import build_causal_features, build_feature_row, depth_imbalance, midpoint
 from btc5m_v2.research.replay import (
     build_feature_dataset_rows,
     iter_replay_rows,
@@ -63,6 +63,29 @@ def test_equal_asks_do_not_force_a_direction():
     feature = build_feature_row(sample_row(up_ask=0.50, down_ask=0.50))
     assert feature.selected_side is None
     assert feature.selected_ask is None
+
+
+def test_future_clob_rows_cannot_change_prior_causal_features():
+    second = 1_000_000_000
+    early = [
+        sample_row(received_ts_ns=100 * second, up_bid=0.49, up_ask=0.51, down_bid=0.49, down_ask=0.51),
+        sample_row(received_ts_ns=110 * second, up_bid=0.54, up_ask=0.56, down_bid=0.44, down_ask=0.46),
+    ]
+    future = sample_row(
+        received_ts_ns=120 * second,
+        up_bid=0.89,
+        up_ask=0.91,
+        down_bid=0.09,
+        down_ask=0.11,
+    )
+
+    before = build_causal_features(early)
+    after = build_causal_features([*early, future])
+
+    assert after[:2] == before
+    assert round(after[1]["up_mid_delta_5s"] or 0.0, 8) == 0.05
+    assert round(after[1]["down_mid_delta_5s"] or 0.0, 8) == -0.05
+    assert after[0]["up_mid_delta_5s"] is None
 
 
 def test_replay_filters_entry_window_and_attaches_only_final_label(tmp_path):
