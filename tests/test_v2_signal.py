@@ -32,6 +32,9 @@ def row(**overrides):
     payload = {
         "seconds_left": 120,
         "resolution_source": EXPECTED_SOURCE,
+        "fees_enabled": True,
+        "fee_rate": 0.07,
+        "fee_exponent": 1.0,
         "up_bid": 0.58,
         "up_ask": 0.60,
         "up_spread": 0.02,
@@ -48,7 +51,7 @@ def row(**overrides):
 
 
 def test_decision_selects_positive_fee_adjusted_edge():
-    decision = decide_snapshot(row(), q_up=0.70, cfg=cfg(), taker_fee_rate=0.07, fees_enabled=True)
+    decision = decide_snapshot(row(), q_up=0.70, cfg=cfg())
     assert decision.trade is True
     assert decision.side == "UP"
     assert decision.edge is not None and decision.edge > 0.04
@@ -78,6 +81,15 @@ def test_decision_fails_closed_on_changed_resolution_source():
     )
     assert decision.trade is False
     assert "unexpected_resolution_source" in decision.reasons
+
+
+def test_decision_fails_closed_on_missing_fee_metadata():
+    payload = row()
+    payload.pop("fee_rate")
+    payload.pop("fee_exponent")
+    decision = decide_snapshot(payload, q_up=0.70, cfg=cfg())
+    assert decision.trade is False
+    assert "missing_fee_metadata" in decision.reasons
 
 
 def test_decision_blocks_small_edge_even_with_high_raw_probability():
