@@ -6,6 +6,7 @@ ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 RUNTIME_DIR="$ROOT/runtime/v2"
 PAPER_RUNNER="$ROOT/scripts/btc5m_v2_paper_live.py"
 BENCHMARK_RUNNER="$ROOT/scripts/btc5m_v2_runner.py"
+STUDY_RUNNER="$ROOT/scripts/btc5m_v2_study.py"
 PY="${BTC5M_V2_PYTHON:-$ROOT/.venv/bin/python}"
 
 PIDFILE="$RUNTIME_DIR/btc5m_v2.pid"
@@ -25,6 +26,7 @@ fi
 usage() {
   cat <<'EOF'
 Usage:
+  btc5m_v2_ctl.sh collect [--markets N] [--output-root PATH] [--dataset-path PATH] [--no-dataset]
   btc5m_v2_ctl.sh start [--model PATH] [--stake-usd N] [--paper-equity-usd N] [--session-minutes N]
   btc5m_v2_ctl.sh benchmark [--threshold N] [--stake-usd N] [--entry-timeout-min N] [--poll-sec N]
   btc5m_v2_ctl.sh status
@@ -32,6 +34,7 @@ Usage:
   btc5m_v2_ctl.sh logs
 
 V2 SAFETY POLICY:
+- `collect` records public CLOB + Chainlink-TWAP research data only.
 - `start` runs the trained-model ONLINE PAPER bot only.
 - `benchmark` runs the legacy .70-threshold paper observer for comparison only.
 - This controller never loads a wallet .env file.
@@ -70,6 +73,46 @@ _start_process() {
     return 2
   fi
   echo "started pid=$(cat "$PIDFILE") mode=$mode log=$log"
+}
+
+collect() {
+  local markets="1"
+  local output_root="$ROOT/runtime/data"
+  local dataset_path="$ROOT/runtime/research/v2_ready.parquet"
+  local build_dataset="1"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --markets) markets="$2"; shift 2;;
+      --output-root) output_root="$2"; shift 2;;
+      --dataset-path) dataset_path="$2"; shift 2;;
+      --no-dataset) build_dataset="0"; shift;;
+      --execute) echo "LIVE EXECUTION BLOCKED: V2 controller is paper/data-only" >&2; exit 2;;
+      *) echo "Unknown arg: $1" >&2; usage; exit 2;;
+    esac
+  done
+
+  if ! [[ "$markets" =~ ^[1-9][0-9]*$ ]]; then
+    echo "--markets must be a positive integer" >&2
+    exit 2
+  fi
+
+  local ts log
+  ts="$(date -u +%Y%m%dT%H%M%SZ)"
+  log="$RUNTIME_DIR/v2_collect_${ts}.log"
+  echo "Starting BTC5M V2 PUBLIC-DATA collection. No wallet credentials are loaded."
+
+  local cmd=(
+    "$PY" "$STUDY_RUNNER"
+    --markets "$markets"
+    --output-root "$output_root"
+    --dataset-path "$dataset_path"
+  )
+  if [[ "$build_dataset" == "0" ]]; then
+    cmd+=(--no-dataset)
+  fi
+
+  _start_process "data-collect" "$log" "${cmd[@]}"
 }
 
 start() {
@@ -143,7 +186,7 @@ status() {
   if is_running; then
     local pid
     pid="$(cat "$PIDFILE")"
-    echo "running pid=$pid mode=paper"
+    echo "running pid=$pid mode=paper-or-data"
     ps -p "$pid" -o pid=,etime=,command=
   else
     echo "stopped"
@@ -180,6 +223,7 @@ cmd="${1:-}"
 [[ -z "$cmd" ]] && { usage; exit 2; }
 shift || true
 case "$cmd" in
+  collect) collect "$@" ;;
   start) start "$@" ;;
   benchmark) benchmark "$@" ;;
   status) status ;;
