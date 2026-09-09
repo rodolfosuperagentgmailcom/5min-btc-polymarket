@@ -1,0 +1,148 @@
+name: BTC5M V2 Evidence Now
+
+on:
+  push:
+    branches:
+      - btc5m-v2-research
+    paths:
+      - ".github/workflows/v2-evidence-now.yml"
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --upgrade pip
+      - run: pip install -r requirements-v2.txt
+
+      - name: Record five minutes of public evidence
+        run: >-
+          PYTHONPATH=. python scripts/btc5m_v2_record.py
+          --duration-sec 300
+          --output-root runtime/data
+          --parquet-batch-rows 250
+
+      - name: Enrich market-specific fees
+        run: PYTHONPATH=. python scripts/btc5m_v2_enrich_fees.py --output-root runtime/data
+
+      - name: Wait for captured markets to end
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import datetime as dt
+          import json
+          import time
+          from pathlib import Path
+          paths = sorted(Path('runtime/data').glob('*/*/metadata.json'))
+          if not paths:
+              raise SystemExit('no recorded market metadata found')
+          latest = max(
+              dt.datetime.fromisoformat(str(json.loads(p.read_text())['market_end']).replace('Z', '+00:00')).timestamp()
+              for p in paths
+          )
+          wait = max(0.0, latest - time.time() + 8.0)
+          if wait > 330:
+              raise SystemExit(f'unexpected settlement wait: {wait:.1f}s')
+          print(f'captured_markets={len(paths)} wait={wait:.1f}s')
+          time.sleep(wait)
+          PY
+
+      - name: Resolve captured markets
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 24); do
+            PYTHONPATH=. python scripts/btc5m_v2_resolve.py --output-root runtime/data --force
+            remaining=$(python - <<'PY'
+          import json
+          from pathlib import Path
+          n = 0
+          for p in Path('runtime/data').glob('*/*/metadata.json'):
+              r = json.loads(p.read_text()).get('resolution') or {}
+              if r.get('resolved') is not True or r.get('winning_side') not in {'UP','DOWN'}:
+                  n += 1
+          print(n)
+          PY
+            )
+            echo "resolution_attempt=$attempt unresolved=$remaining"
+            [ "$remaining" = "0" ] && break
+            sleep 10
+          done
+
+      - name: Build readiness report
+        shell: bash
+        run: |
+          PYTHONPATH=. python - <<'PY'
+          import json
+          from pathlib import Path
+          from btc5m_v2.research.readiness import readiness_report
+          report = readiness_report('runtime/data')
+          out = Path('runtime/research/readiness.json')
+          out.parent.mkdir(parents=True, exist_ok=True)
+          out.write_text(json.dumps(report, indent=2, sort_keys=True) + '\n')
+          print(json.dumps({
+              'markets_seen': report['markets_seen'],
+              'v2_ready_markets': report['v2_ready_markets'],
+              'decision_window_markets': report['decision_window_markets'],
+              'resolved_markets': report['resolved_markets'],
+              'verified_btc_reference_markets': report['verified_btc_reference_markets'],
+              'fee_ready_markets': report['fee_ready_markets'],
+              'reason_counts': report['reason_counts'],
+          }, indent=2, sort_keys=True))
+          PY
+
+      - name: Build causal dataset
+        run: >-
+          PYTHONPATH=. python scripts/btc5m_v2_build_dataset.py
+          --input-root runtime/data
+          --output runtime/research/btc5m_features.parquet
+          --sample-interval-ms 1000
+
+      - name: Benchmark legacy threshold under latency
+        run: >-
+          PYTHONPATH=. python scripts/btc5m_v2_paper_benchmark.py
+          --input-root runtime/data
+          --threshold 0.70
+          --notional-usd 5
+          --max-participation-pct 20
+          --latency-ms 0 100 250 500 1000
+          --output runtime/research/legacy_latency_sweep.json
+
+      - name: Write evidence manifest
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          import pyarrow.parquet as pq
+          readiness = json.loads(Path('runtime/research/readiness.json').read_text())
+          dataset = Path('runtime/research/btc5m_features.parquet')
+          manifest = {
+              'mode': 'public-data-only',
+              'live_execution': False,
+              'credentials_loaded': False,
+              'duration_seconds': 300,
+              'feature_rows': pq.read_table(dataset).num_rows if dataset.exists() else 0,
+              'readiness': readiness,
+          }
+          Path('runtime/research/evidence_manifest.json').write_text(json.dumps(manifest, indent=2, sort_keys=True) + '\n')
+          print(json.dumps(manifest, indent=2, sort_keys=True))
+          PY
+
+      - name: Upload evidence bundle
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: btc5m-v2-evidence-now-${{ github.run_id }}
+          path: |
+            runtime/data/**
+            runtime/research/**
+          if-no-files-found: warn
+          retention-days: 30
