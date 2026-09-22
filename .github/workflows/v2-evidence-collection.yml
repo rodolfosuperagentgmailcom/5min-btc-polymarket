@@ -62,7 +62,7 @@ jobs:
           PYTHONPATH=. python scripts/btc5m_v2_record.py \
             --duration-sec "$seconds" \
             --output-root runtime/data \
-            --parquet-batch-rows 250
+            --parquet-batch-rows 10000
 
       - name: Enrich market-specific fee schedules
         run: PYTHONPATH=. python scripts/btc5m_v2_enrich_fees.py --output-root runtime/data
