@@ -123,10 +123,12 @@ class MarketRecorder:
             "event_type": envelope.event.get("event_type"),
             "event": envelope.event,
         }
-        with self.raw_path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(row, separators=(",", ":"), ensure_ascii=False) + "\n")
-            handle.flush()
+        self._raw_handle.write(
+            json.dumps(row, separators=(",", ":"), ensure_ascii=False) + "\n"
+        )
         self.raw_events += 1
+        if self.raw_events % max(1, int(self.raw_flush_every_events)) == 0:
+            self._raw_handle.flush()
 
     def _snapshot_row(self, envelope: WsEnvelope) -> dict[str, Any] | None:
         if self.up.best_bid is None or self.up.best_ask is None:
@@ -185,6 +187,9 @@ class MarketRecorder:
         return True
 
     def flush_parquet(self) -> Path | None:
+        # Keep the append-only journal reasonably current whenever a normalized
+        # checkpoint is committed, without forcing a flush on every market event.
+        self._raw_handle.flush()
         if not self.rows:
             return None
         path = self.market_dir / f"clob_snapshots_part-{self.part_number:06d}.parquet"
@@ -196,8 +201,13 @@ class MarketRecorder:
         return path
 
     def close(self, *, status: str = "complete") -> None:
-        self.flush_parquet()
-        self._write_metadata(status=status)
+        try:
+            self.flush_parquet()
+            self._write_metadata(status=status)
+        finally:
+            if not self._raw_handle.closed:
+                self._raw_handle.flush()
+                self._raw_handle.close()
 
 
 async def record_one_market(
