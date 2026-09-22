@@ -106,6 +106,30 @@ def _write_verified_btc(
     )
 
 
+def _write_fee_schedule(
+    market_dir: Path,
+    *,
+    rate: float = 0.07,
+    exponent: float = 1.0,
+    fees_enabled: bool = True,
+) -> None:
+    (market_dir / "fees.json").write_text(
+        json.dumps(
+            {
+                "condition_id": "condition-test",
+                "fees_enabled": fees_enabled,
+                "rate": rate,
+                "exponent": exponent,
+                "taker_only": True,
+                "maker_base_fee_bps": 0,
+                "taker_base_fee_bps": 0,
+                "source": "clob_market_info",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
 def test_dataset_builds_causal_lags_and_labels(tmp_path):
     market_dir = _write_market(tmp_path)
     rows = build_market_dataset_rows(market_dir, sample_interval_ms=1000)
@@ -192,3 +216,22 @@ def test_dataset_write_roundtrip_and_summary(tmp_path):
 
     sidecar = json.loads(output.with_suffix(".parquet.json").read_text(encoding="utf-8"))
     assert sidecar["rows"] == 3
+
+
+def test_market_fee_schedule_is_carried_into_dataset_rows(tmp_path):
+    market_dir = _write_market(tmp_path)
+    _write_fee_schedule(market_dir, rate=0.07, exponent=1.0, fees_enabled=True)
+
+    rows = build_market_dataset_rows(market_dir, sample_interval_ms=1000)
+    row = rows[-1]
+    assert row["fees_enabled"] is True
+    assert row["fee_rate"] == 0.07
+    assert row["fee_exponent"] == 1.0
+
+    output = tmp_path / "features" / "fees.parquet"
+    summary = write_dataset([market_dir], output, sample_interval_ms=1000)
+    assert summary["fee_features_populated"] is True
+    saved = pq.read_table(output).to_pylist()[-1]
+    assert saved["fees_enabled"] is True
+    assert saved["fee_rate"] == 0.07
+    assert saved["fee_exponent"] == 1.0
