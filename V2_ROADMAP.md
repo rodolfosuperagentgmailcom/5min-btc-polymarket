@@ -4,7 +4,11 @@ This fork develops a safety-first, research-driven successor to the original 5-m
 
 ## Operating principle
 
-The V2 signal should not buy simply because one side is already expensive. It should estimate fair settlement probability, compare that estimate with the executable all-in market price, subtract fees/slippage, and trade only when the remaining edge clears a configured threshold.
+V2 does not buy simply because one side is already expensive. It estimates a settlement probability from causal data, compares that estimate with the executable all-in market cost, accounts for the market-specific fee schedule and realistic execution constraints, and permits a paper signal only when the remaining edge clears configured gates.
+
+**Status convention**
+- `[x]` = implemented and covered by the research/safety code path.
+- Evidence requirements are listed separately. Implemented does **not** mean proven profitable or approved for live trading.
 
 ## Milestone 1 — SAFE (P0)
 
@@ -15,55 +19,75 @@ The V2 signal should not buy simply because one side is already expensive. It sh
 - [ ] Remove permissive execution defaults (`PM_MAX_SPREAD=1`, `PM_MIN_TOP_ASK_NOTIONAL_USD=0`) from the legacy live execution path before any future live adapter is enabled.
 - [x] Define V2 position marks from executable CLOB best bid rather than Gamma outcome price.
 - [x] Add quote-staleness and consecutive-data-error circuit breakers.
-- [ ] Enforce session limits in an executor: max daily loss, max trades/day, consecutive-loss stop. Values are configured now; execution remains disabled.
+- [x] Enforce paper-session limits: max daily loss, max trades/day, and consecutive-loss stop.
 - [x] Disable automatic hedge by default.
-- [x] Make V2 dry-run/paper mode the controller default and block V2 `--execute` entirely during research.
+- [x] Make V2 dry-run/paper mode the controller default and reject V2 `--execute` during research.
 - [x] Add tests for current safety gates.
 - [x] Fail closed if the BTC 5-minute market resolution source is missing or differs from the configured Chainlink BTC/USD 60-second TWAP source.
 
 ## Milestone 2 — DATA (P0)
 
 - [x] Polymarket public market WebSocket feed.
-- [x] Add Chainlink Data Streams discovery/authentication adapter primitives without hard-pinning an unverified feed ID.
-- [ ] Ingest the verified settlement-aligned BTC/USD 60-second TWAP report stream. The public discovery catalog currently exposes a BTC/USD CEX-price stream, not the settlement TWAP feed.
-- [x] Record exchange timestamps and local receive timestamps for CLOB events.
+- [x] Public Polymarket RTDS ingestion of Chainlink-computed BTC/USD TWAP observations.
+- [x] Prefer exact signed-E18 `full_accuracy_value` when available.
+- [x] Record exchange/source timestamps and local receive timestamps for causal joins.
 - [x] Record UP/DOWN bid, ask, spread, and top-3 depth.
-- [ ] Record BTC reference, current value, delta, 15s/30s/60s momentum, and realized volatility from the verified settlement-aligned feed.
-- [x] Store raw WebSocket events in append-only JSONL and normalized snapshots in fixed-schema Zstd Parquet parts.
-- [x] Attach final market resolution to each 5-minute event when observed through the Polymarket market WebSocket, with post-close Gamma enrichment available for unresolved recordings.
-- [x] Add live public WebSocket and end-to-end recorder smoke workflows with no credentials or order path.
-- [x] Add a public Chainlink discovery smoke workflow that fails safely without substituting a non-TWAP BTC feed.
+- [x] Record BTC reference, current value, delta, 15s/30s/60s momentum, realized volatility, and impulse-Z.
+- [x] Verify BTC sample provenance against each market's declared resolution source and fail closed on mismatch.
+- [x] Store raw WebSocket events in append-only JSONL and normalized snapshots in Zstd Parquet.
+- [x] Attach final market resolution through the market WebSocket, with post-close Gamma enrichment for unresolved recordings.
+- [x] Fetch and persist the market-specific CLOB fee schedule.
+- [x] Require clean/no-reconnect recordings, a verified market-start BTC reference, resolution, fee metadata, and decision-window coverage before a market is V2-ready.
+- [x] Build a ready-only aggregate Parquet dataset.
+- [x] Add public WebSocket, TWAP, fee, recorder, and end-to-end evidence workflows with no wallet/order path.
 
 ## Milestone 3 — EDGE (P1)
 
-- [ ] Reproduce the original `ask >= 0.70` strategy as a benchmark.
-- [ ] Add volatility-normalized BTC impulse.
-- [ ] Add momentum consistency/acceleration features.
-- [ ] Add order-book imbalance as a model feature.
-- [ ] Build an interpretable fair-probability baseline.
-- [ ] Calculate fee-adjusted break-even probability.
-- [ ] Estimate executable VWAP/slippage for intended order size.
-- [ ] Trade only when model probability minus all-in break-even exceeds configured minimum edge.
+- [x] Reproduce the original `ask >= 0.70` stronger-side strategy as the control benchmark.
+- [x] Add fee-aware legacy control metrics without changing the legacy signal rule.
+- [x] Add executable L2-book paper replay with VWAP/slippage, latency, and visible-liquidity participation limits.
+- [x] Add volatility-normalized BTC impulse.
+- [x] Add causal 5s/15s/30s/60s market-price and BTC momentum features.
+- [x] Add order-book imbalance and microstructure features.
+- [x] Build an interpretable probability-model path with explicit anti-label-leakage checks.
+- [x] Calculate fee-adjusted break-even probability using captured market-specific fee rate/exponent.
+- [x] Estimate executable VWAP/slippage for intended order size.
+- [x] Require model probability minus executable all-in cost to exceed the configured minimum edge.
 
-## Milestone 4 — PAPER (P1)
+## Milestone 4 — PAPER / OUT-OF-SAMPLE (P1)
 
-- [ ] Pure signal function shared by replay, paper, and any future live adapter.
-- [ ] Paper executor with realistic fills, fees, slippage, and latency.
-- [ ] Walk-forward/out-of-sample evaluation.
-- [ ] Performance report: trades, win rate, gross/net P&L, fees, slippage, profit factor, max drawdown, calibration.
-- [ ] Minimum 500 independent forward-paper signals before any live-sizing discussion.
+- [x] Shared causal feature/signal logic for replay and online paper paths.
+- [x] Paper executor with executable book fills, fees, slippage, latency assumptions, and participation limits.
+- [x] Expanding-window chronological walk-forward evaluation with past-only scaler/model fitting.
+- [x] Compare V2 model and legacy strategy on the same held-out market blocks.
+- [x] Report trades, win rate, fees, all-in cost, net P&L, return on cost, mean P&L/trade, and max drawdown.
+- [ ] Accumulate at least 500 independent forward-paper signals before any live-sizing discussion.
+- [ ] Demonstrate positive fee/slippage-inclusive out-of-sample performance across multiple volatility/time regimes.
+- [ ] Review confidence intervals / robustness after sufficient independent markets are collected.
+
+## Evidence gate — CURRENT BOTTLENECK
+
+The primary remaining blocker is **evidence volume**, not missing architecture.
+
+Before any live review:
+1. Collect enough fully V2-ready markets with clean CLOB + settlement-aligned BTC TWAP + exact reference + fee metadata + final resolution.
+2. Keep chronological market boundaries intact; never random-split rows from the same 5-minute market across train/test.
+3. Run the executable walk-forward paper comparison across multiple regimes.
+4. Reach at least 500 independent forward-paper signals.
+5. Require net results after fees, spread/slippage, modeled latency, and fill/participation constraints.
+6. Keep `live_trading_approved = false` unless the evidence gate is explicitly reviewed later.
 
 ## Verification record
 
 - Safety CI: passing.
-- Research CI: passing.
-- Public Gamma/CLOB safety smoke: passing.
-- Public CLOB WebSocket smoke: passing; observed exchange-to-receive age around 48 ms in the 2026-09-06 smoke run.
-- End-to-end recorder smoke: passing; a 12-second public-data run recorded 2,718 raw events and 2,598 normalized snapshots and successfully reopened the generated Parquet.
-- Chainlink public discovery smoke on 2026-09-06: passing. It discovered one live BTC/USD stream, `BTC/USD-Streams-CexPrice` (`0x00039d9e45394f473ab1f050a1b963e6b05351e52d71e507509ada0c95ed75b8`), and zero 60-second TWAP candidates. That CEX-price feed is intentionally not used as the settlement feed.
-- The exact Polymarket BTC 5-minute resolution source observed in the live market matched `https://data.chain.link/streams/btc-usd-twap-60s-streams`.
-- No wallet credentials were loaded and no order path was used by V2 smoke/recorder workflows.
+- Research CI: passing through commit `362fa23e21ea4a5467750c2fe410b518083047a5` on 2026-09-22.
+- Public CLOB / recorder smoke workflows: passing.
+- Public RTDS TWAP feed path implemented with causal receive timestamps and exact-value parsing.
+- Polymarket BTC 5-minute market pages re-verified on **2026-09-22**: resolution source remains `https://data.chain.link/streams/btc-usd-twap-60s-streams`.
+- Market-specific fee metadata is persisted and now carried into V2 dataset rows as `fees_enabled`, `fee_rate`, and `fee_exponent`.
+- Legacy threshold benchmark now has explicit gross and fee-aware controls; executable paper replay remains the stronger realism benchmark.
+- No wallet credentials are required for V2 research collection and no live-order path is approved.
 
 ## Live execution policy
 
-Live execution is intentionally disabled by default. No wallet private key, API secret, or `.env` file should be committed to this repository. Any eventual live adapter must require an explicit execution flag and pass every risk/data-quality gate.
+Live execution remains intentionally disabled. No wallet private key, API secret, or `.env` file should be committed to this repository. A future live adapter must be a separate reviewed step, explicitly enabled, legally accessible to the operator, and gated by the complete safety/data/evidence contract above.
