@@ -10,6 +10,7 @@ import pyarrow.parquet as pq
 
 from btc5m_v2.research.btc_features import BTCSample, btc_features_at
 from btc5m_v2.research.features import build_feature_row, feature_payload
+from btc5m_v2.research.fee_enrich import read_fee_schedule
 from btc5m_v2.research.quality import read_recording_reconnects
 from btc5m_v2.research.replay import iter_snapshot_rows, read_btc_samples_parquet, read_resolution
 
@@ -58,6 +59,9 @@ DATASET_SCHEMA = pa.schema(
         ("btc_realized_vol_30s", pa.float64()),
         ("btc_realized_vol_60s", pa.float64()),
         ("btc_impulse_z", pa.float64()),
+        ("fees_enabled", pa.bool_()),
+        ("fee_rate", pa.float64()),
+        ("fee_exponent", pa.float64()),
         ("resolved", pa.bool_()),
         ("winning_side", pa.string()),
         ("label_up", pa.int8()),
@@ -229,6 +233,7 @@ def build_market_dataset_rows(
     up_mids = [row.get("up_mid") for row in features]
 
     btc_samples, btc_reference = _verified_btc_inputs(market_dir)
+    fee_schedule = read_fee_schedule(market_dir) or {}
     resolved, winning_side = read_resolution(market_dir)
     label_up = None if not resolved or winning_side not in {"UP", "DOWN"} else int(winning_side == "UP")
 
@@ -254,6 +259,16 @@ def build_market_dataset_rows(
             )
 
         _populate_btc_features(row, samples=btc_samples, reference_price=btc_reference)
+
+        row["fees_enabled"] = (
+            None if "fees_enabled" not in fee_schedule else bool(fee_schedule.get("fees_enabled"))
+        )
+        row["fee_rate"] = (
+            None if fee_schedule.get("rate") is None else float(fee_schedule.get("rate"))
+        )
+        row["fee_exponent"] = (
+            None if fee_schedule.get("exponent") is None else float(fee_schedule.get("exponent"))
+        )
 
         row["resolved"] = resolved
         row["winning_side"] = winning_side
@@ -308,6 +323,7 @@ def write_dataset(
         "markets": len({row["slug"] for row in rows}),
         "sample_interval_ms": sample_interval_ms,
         "btc_features_populated": any(row.get("btc_current") is not None for row in rows),
+        "fee_features_populated": any(row.get("fee_rate") is not None for row in rows),
         "recording_quality": "clob_and_present_btc_reconnects_required_zero",
     }
     destination.with_suffix(destination.suffix + ".json").write_text(
