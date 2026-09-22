@@ -26,7 +26,7 @@ jobs:
           python-version: "3.12"
       - run: pip install -r requirements-v2.txt
       - name: Record public CLOB and BTC TWAP data
-        run: PYTHONPATH=. python scripts/btc5m_v2_record.py --duration-sec 12 --output-root runtime/smoke --parquet-batch-rows 5
+        run: PYTHONPATH=. python scripts/btc5m_v2_record.py --duration-sec 12 --output-root runtime/smoke --parquet-batch-rows 1000
       - name: Validate CLOB and BTC artifacts
         run: |
           PYTHONPATH=. python - <<'PY'
