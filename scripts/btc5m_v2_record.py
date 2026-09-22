@@ -42,7 +42,7 @@ def main() -> int:
     )
     parser.add_argument("--duration-sec", type=float, default=300.0)
     parser.add_argument("--output-root", default="runtime/data")
-    parser.add_argument("--parquet-batch-rows", type=int, default=100)
+    parser.add_argument("--parquet-batch-rows", type=int, default=10_000)
     parser.add_argument(
         "--reference-tolerance-ms",
         type=int,
