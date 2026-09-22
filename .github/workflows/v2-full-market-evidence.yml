@@ -41,7 +41,7 @@ jobs:
             --alignment-offset-sec 0.5 \
             --duration-sec 305 \
             --output-root runtime/data \
-            --parquet-batch-rows 250
+            --parquet-batch-rows 10000
 
       - name: Enrich market-specific fee schedules
         run: PYTHONPATH=. python scripts/btc5m_v2_enrich_fees.py --output-root runtime/data
