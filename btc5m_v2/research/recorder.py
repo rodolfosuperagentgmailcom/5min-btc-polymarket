@@ -69,6 +69,7 @@ class MarketRecorder:
     market: MarketInfo
     output_root: Path
     parquet_batch_rows: int = 100
+    raw_flush_every_events: int = 100
 
     def __post_init__(self) -> None:
         now_ns = time.time_ns()
@@ -76,6 +77,7 @@ class MarketRecorder:
         self.market_dir = self.output_root / date / self.market.slug
         self.market_dir.mkdir(parents=True, exist_ok=True)
         self.raw_path = self.market_dir / "clob_raw.jsonl"
+        self._raw_handle = self.raw_path.open("a", encoding="utf-8")
         self.metadata_path = self.market_dir / "metadata.json"
         self.resolution_path = self.market_dir / "resolution.json"
         self.up = BookState(self.market.up_token_id)
