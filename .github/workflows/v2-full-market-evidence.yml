@@ -96,6 +96,7 @@ jobs:
           import json
           from pathlib import Path
           from btc5m_v2.research.readiness import readiness_report
+          from btc5m_v2.research.diagnostics import rejection_diagnostics
           from btc5m_v2.research.ready_dataset import write_ready_dataset
 
           research = Path("runtime/research")
@@ -105,6 +106,11 @@ jobs:
               json.dumps(report, indent=2, sort_keys=True) + "\n",
               encoding="utf-8",
           )
+          diagnostics = rejection_diagnostics(report)
+          (research / "diagnostics.json").write_text(
+              json.dumps(diagnostics, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
           print(json.dumps({
               "markets_seen": report["markets_seen"],
               "v2_ready_markets": report["v2_ready_markets"],
@@ -112,6 +118,8 @@ jobs:
               "resolved_markets": report["resolved_markets"],
               "verified_btc_reference_markets": report["verified_btc_reference_markets"],
               "reason_counts": report["reason_counts"],
+              "top_blocker": diagnostics.get("top_blocker"),
+              "next_collection_action": diagnostics.get("next_collection_action"),
           }, indent=2, sort_keys=True))
 
           if report["v2_ready_markets"] > 0:
@@ -142,12 +150,14 @@ jobs:
 
           readiness_path = Path("runtime/research/readiness.json")
           latency_path = Path("runtime/research/legacy_latency_sweep.json")
+          diagnostics_path = Path("runtime/research/diagnostics.json")
           manifest = {
               "mode": "public-data-only-boundary-aligned",
               "live_execution": False,
               "credentials_loaded": False,
               "trigger": "workflow_dispatch" if "${{ github.event_name }}" == "workflow_dispatch" else "one_shot_push",
               "readiness": json.loads(readiness_path.read_text(encoding="utf-8")),
+              "diagnostics": json.loads(diagnostics_path.read_text(encoding="utf-8")),
               "legacy_latency_sweep": json.loads(latency_path.read_text(encoding="utf-8")),
           }
           Path("runtime/research/full_market_manifest.json").write_text(
