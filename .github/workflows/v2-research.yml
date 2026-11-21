@@ -29,10 +29,13 @@ jobs:
           PYTHONPATH=. python -m py_compile \
             scripts/btc5m_v2_paper_live.py \
             scripts/btc5m_v2_study.py \
+            scripts/btc5m_v2_evidence.py \
             btc5m_v2/online_paper.py \
-            btc5m_v2/research/study.py
+            btc5m_v2/research/study.py \
+            btc5m_v2/research/evidence.py
           PYTHONPATH=. python scripts/btc5m_v2_paper_live.py --help >/dev/null
           PYTHONPATH=. python scripts/btc5m_v2_study.py --help >/dev/null
+          PYTHONPATH=. python scripts/btc5m_v2_evidence.py --help >/dev/null
       - name: Run V2 tests
         run: PYTHONPATH=. pytest -q --junitxml=pytest-v2.xml tests/test_v2_*.py
       - name: Upload pytest report
