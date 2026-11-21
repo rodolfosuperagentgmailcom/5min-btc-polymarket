@@ -61,6 +61,7 @@ V2 does not buy simply because one side is already expensive. It estimates a set
 - [x] Expanding-window chronological walk-forward evaluation with past-only scaler/model fitting.
 - [x] Compare V2 model and legacy strategy on the same held-out market blocks.
 - [x] Report trades, win rate, fees, all-in cost, net P&L, return on cost, mean P&L/trade, and max drawdown.
+- [x] Add an integrity-checked forward-paper evidence ledger/report (settled independent signals, net P&L, fees, drawdown, duplicates/unsafe-entry detection, progress to target).
 - [ ] Accumulate at least 500 independent forward-paper signals before any live-sizing discussion.
 - [ ] Demonstrate positive fee/slippage-inclusive out-of-sample performance across multiple volatility/time regimes.
 - [ ] Review confidence intervals / robustness after sufficient independent markets are collected.
@@ -86,6 +87,7 @@ Before any live review:
 - Polymarket BTC 5-minute market pages re-verified on **2026-09-22**: resolution source remains `https://data.chain.link/streams/btc-usd-twap-60s-streams`.
 - Market-specific fee metadata is persisted and now carried into V2 dataset rows as `fees_enabled`, `fee_rate`, and `fee_exponent`.
 - Legacy threshold benchmark now has explicit gross and fee-aware controls; executable paper replay remains the stronger realism benchmark.
+- Forward-paper evidence CLI: `python scripts/btc5m_v2_evidence.py --target 500`; it never approves live execution and fails integrity on wallet/order-path journal entries or duplicate settled market slugs.
 - No wallet credentials are required for V2 research collection and no live-order path is approved.
 
 ## Live execution policy
