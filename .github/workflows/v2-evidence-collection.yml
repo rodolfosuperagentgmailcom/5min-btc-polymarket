@@ -178,6 +178,7 @@ jobs:
           --input-root runtime/data
           --output runtime/research/btc5m_features.parquet
           --sample-interval-ms 1000
+          --ready-only
 
       - name: Run honest legacy latency sweep
         run: >-
@@ -229,6 +230,7 @@ jobs:
               "live_execution": False,
               "credentials_loaded": False,
               "duration_minutes": int(os.environ["EVIDENCE_DURATION_MINUTES"]),
+              "target_complete_markets": int(os.environ["EVIDENCE_DURATION_MINUTES"]) // 5,
               "markets_recorded": len(records),
               "markets_resolved": len(resolved),
               "unresolved_slugs": unresolved_slugs,
