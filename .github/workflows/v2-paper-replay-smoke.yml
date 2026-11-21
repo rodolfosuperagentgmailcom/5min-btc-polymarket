@@ -16,7 +16,7 @@ on:
 jobs:
   public-paper-replay:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -64,7 +64,7 @@ jobs:
           from pathlib import Path
 
           metadata = next(Path("runtime/data").glob("*/*/metadata.json"))
-          for attempt in range(1, 19):
+          for attempt in range(1, 37):
               subprocess.run(
                   [sys.executable, "scripts/btc5m_v2_resolve.py", "--output-root", "runtime/data", "--force"],
                   check=True,
@@ -75,7 +75,7 @@ jobs:
               if resolution.get("resolved") is True and resolution.get("winning_side") in {"UP", "DOWN"}:
                   print(json.dumps(resolution, indent=2))
                   break
-              if attempt == 18:
+              if attempt == 36:
                   raise SystemExit("captured market did not resolve within smoke polling window")
               time.sleep(10)
           PY
