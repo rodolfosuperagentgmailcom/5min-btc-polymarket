@@ -1,4 +1,5 @@
 name: BTC5M V2 Paper Replay Smoke
+# Triggered for fresh public replay validation.
 
 on:
   push:
