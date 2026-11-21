@@ -199,6 +199,7 @@ async def run_btc_recorder(
     config: V2Config | None = None,
     output_root: str | Path = "runtime/data",
     reference_tolerance_ms: int = 5_000,
+    max_markets: int | None = None,
 ) -> list[BTCMarketRecorder]:
     cfg = config or load_config()
     root = Path(output_root)
@@ -207,6 +208,8 @@ async def run_btc_recorder(
     last_slug: str | None = None
 
     while time.time() < stop_ts:
+        if max_markets is not None and len(completed) >= max(0, int(max_markets)):
+            break
         market = discover_current_market(cfg)
         if market is None or market.slug == last_slug:
             await asyncio.sleep(1.0)
