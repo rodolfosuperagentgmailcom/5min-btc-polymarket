@@ -3,3 +3,4 @@ requested_at_utc: 2026-09-07T22:32:00Z
 purpose: collect one additional independent boundary-aligned public-data BTC5M market for V2 readiness and benchmark validation
 2026-09-22T12:35Z — one-shot boundary-aligned evidence collection after source/fee verification.
 2026-11-21T19:17Z — full-market boundary-aligned evidence run after recorder and settlement-latency fixes.
+2026-11-21T21:03: trigger post-max-markets validation
