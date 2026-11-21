@@ -40,6 +40,7 @@ jobs:
             --align-next-market \
             --alignment-offset-sec 0.5 \
             --duration-sec 305 \
+            --max-markets 1 \
             --output-root runtime/data \
             --parquet-batch-rows 10000
 
