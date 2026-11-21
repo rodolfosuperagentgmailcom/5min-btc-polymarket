@@ -18,12 +18,14 @@ async def _record_all(
     output_root: Path,
     parquet_batch_rows: int,
     reference_tolerance_ms: int,
+    max_markets: int | None,
 ):
     clob_task = asyncio.create_task(
         run_recorder(
             duration_sec=duration_sec,
             output_root=output_root,
             parquet_batch_rows=parquet_batch_rows,
+            max_markets=max_markets,
         )
     )
     btc_task = asyncio.create_task(
@@ -31,6 +33,7 @@ async def _record_all(
             duration_sec=duration_sec,
             output_root=output_root,
             reference_tolerance_ms=reference_tolerance_ms,
+            max_markets=max_markets,
         )
     )
     return await asyncio.gather(clob_task, btc_task)
@@ -43,6 +46,12 @@ def main() -> int:
     parser.add_argument("--duration-sec", type=float, default=300.0)
     parser.add_argument("--output-root", default="runtime/data")
     parser.add_argument("--parquet-batch-rows", type=int, default=10_000)
+    parser.add_argument(
+        "--max-markets",
+        type=int,
+        default=None,
+        help="Stop after recording this many distinct 5-minute markets.",
+    )
     parser.add_argument(
         "--reference-tolerance-ms",
         type=int,
@@ -82,6 +91,7 @@ def main() -> int:
             output_root=Path(args.output_root),
             parquet_batch_rows=max(1, args.parquet_batch_rows),
             reference_tolerance_ms=max(0, args.reference_tolerance_ms),
+            max_markets=None if args.max_markets is None else max(0, args.max_markets),
         )
     )
 
@@ -90,6 +100,7 @@ def main() -> int:
         "mode": "public-data-only",
         "aligned_next_market": bool(args.align_next_market),
         "aligned_target_ts": aligned_target,
+        "max_markets": args.max_markets,
         "recording_started_ts": started_ts,
         "markets_recorded": len(clob_completed),
         "raw_clob_events": sum(item.raw_events for item in clob_completed),
